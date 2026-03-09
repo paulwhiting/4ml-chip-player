@@ -151,6 +151,12 @@ Command Reference
 | 16   | 0100     | 4   |  | 32.       | 1100     | C   |
 | 32   | 0101     | 5   |  | 64.       | 1101     | D   |
 | 64   | 0110     | 6   |  |           | 1110     | E   |
-| 128  | 0111     | 7   |  |           | 1111     | F   |
+| 128  | 0111     | 7   |  | (AVR ext) | 1111     | F   |
 -------------------------  ------------------------------
 ```
+
+On AVR targets, a duration nibble of `1111` (`F`) for a note/rest indicates that
+the note's length is specified explicitly in the next byte as a count of
+128th-note units. If the desired duration exceeds `0xFF` 128th notes, multiple
+`F`-duration commands are emitted, each followed by a byte of up to `0xFF`,
+until the full duration is represented.

@@ -43,7 +43,8 @@ import struct
 #################
 
 # reduces all volume commands by 1 step out of 16
-volume_reduction = 2
+#volume_reduction = 2
+volume_reduction = 0
 
 # the output needs to be tweaked a bit depending on the platform
 # possible targets: 'AVR' for AVR microcontroller code, or blank for anything else
@@ -131,9 +132,14 @@ print(f"\nHello! Welcome to the Mega Micro Music Macro Language (4ML) compiler!\
 # import the file #
 ###################
 
+if '--avr' in sys.argv:
+	target_platform = 'AVR'
+	sys.argv.remove('--avr')
+
+
 # if we don't have enough arguments, shut it down!
 if len(sys.argv) < 2:
-	print("to run use: python mega-mmml.py <filename>")
+	print("to run use: python (--avr) mega-mmml.py <filename>")
 	sys.exit()
 
 # our precious input file
@@ -227,7 +233,10 @@ for match in matches:
 	else:
 		pattern_numbers.append(current_pattern)
 
-max_patterns = max(pattern_numbers)
+if pattern_numbers:
+	max_patterns = max(pattern_numbers)
+else:
+	max_patterns = 0
 
 # put pattern data together contiguously
 pattern_data = []
@@ -236,7 +245,7 @@ for x in range(max_patterns + 1):
 	# match from PX to the next C or P
 	matches = re.findall(fr'P{x}([^PC]+)', mmml_data_string)
 
-    # Filter out matches that start with a digit
+	# Filter out matches that start with a digit
 	matches = [match for match in matches if not match[0].isdigit()]
 
 	results = "".join(matches)
@@ -287,12 +296,35 @@ def process_mmml_string(input_string):
 		'128': 0x07, '2.': 0x08, '4.': 0x09, '8.': 0x0A, '16.': 0x0B, '32.': 0x0C, '64.': 0x0D
 	}
 
+	# duration (as written) to length in 128th-note units
+	duration_to_128th = {
+		'1':   128,
+		'2':    64,
+		'4':    32,
+		'8':    16,
+		'16':    8,
+		'32':    4,
+		'64':    2,
+		'128':   1,
+		'2.':   96,
+		'4.':   48,
+		'8.':   24,
+		'16.':  12,
+		'32.':   6,
+		'64.':   3,
+	}
+
+	# inverse map: 128th-note length -> duration nibble
+	duration_128th_to_nibble = {}
+	for dstr, nib in duration_lookup.items():
+		duration_128th_to_nibble[duration_to_128th[dstr]] = nib
+
 	matching_loop = 0
 
 	while index < len(input_string):
 		current_char  = input_string[index]
 
-		# process standard notes
+		# process standard notes (r, c..b, with optional sharp)
 		if current_char in ('r','c','c+','d','d+','e','e+','f','f+','g','g+','a','a+','b','b+',):
 			note_duration   = ''
 			note_nibble     = 0
@@ -311,7 +343,7 @@ def process_mmml_string(input_string):
 				index += 1
 
 			# check for dots after duration
-			if index < len(string) and string[index] == '.':
+			if index < len(input_string) and input_string[index] == '.':
 				note_duration = note_duration + '.'
 				index += 1
 
@@ -328,9 +360,105 @@ def process_mmml_string(input_string):
 			if duration_nibble > 16 or duration_nibble < 0:
 				throw_error(5, current_char, note_duration)
 
-			# squash the command and value to a single byte and output
-			output_byte = (note_nibble << 4) | duration_nibble
-			output_bytecode.append(output_byte)
+			# AVR: collapse tied/successive same-note durations into minimal byte sequence
+			if target_platform == 'AVR':
+				# base duration in 128th-note units
+				if note_duration not in duration_to_128th:
+					throw_error(5, current_char, note_duration)
+				total_128 = duration_to_128th[note_duration]
+				last_duration = note_duration
+				base_letter = current_char[0]
+
+				scan_index = index
+
+				# consume any following &/^ and same-note tokens, accumulating duration
+				while scan_index < len(input_string):
+					tmp = scan_index
+
+					# skip explicit tie/slur symbols
+					while tmp < len(input_string) and input_string[tmp] in ('&', '^'):
+						tmp += 1
+
+					if tmp >= len(input_string):
+						break
+
+					# must be same base note letter
+					if input_string[tmp] != base_letter:
+						break
+
+					tmp2 = tmp + 1
+					next_char = base_letter
+
+					# optional sharpening
+					if tmp2 < len(input_string) and input_string[tmp2] in ('+', '#'):
+						next_char = next_char + '+'
+						tmp2 += 1
+
+					# different accidental = different note, stop collapsing
+					if next_char != current_char:
+						break
+
+					# parse optional duration for this subsequent note
+					next_duration = ''
+					while tmp2 < len(input_string) and input_string[tmp2].isdigit() and len(next_duration) < 3:
+						next_duration += input_string[tmp2]
+						tmp2 += 1
+
+					if tmp2 < len(input_string) and input_string[tmp2] == '.':
+						next_duration = next_duration + '.'
+						tmp2 += 1
+
+					# if no duration given, repeat the last one
+					if next_duration:
+						last_duration = next_duration
+						previous_duration = next_duration
+					else:
+						next_duration = last_duration
+
+					if next_duration not in duration_to_128th:
+						throw_error(5, current_char, next_duration)
+
+					total_128 += duration_to_128th[next_duration]
+					scan_index = tmp2
+
+				# advance main index past everything we collapsed
+				index = scan_index
+
+				# encode the accumulated duration using the smallest number of command bytes
+				# First preference: a single built-in duration
+				if total_128 in duration_128th_to_nibble:
+					final_duration_nibble = duration_128th_to_nibble[total_128]
+					output_byte = (note_nibble << 4) | final_duration_nibble
+					output_bytecode.append(output_byte)
+				else:
+					remaining = total_128
+
+					# if it fits in a single extended-duration command, use that
+					if remaining <= 0xFF:
+						output_bytecode.append((note_nibble << 4) | 0x0F)
+						output_bytecode.append(remaining)
+					else:
+						# chunk into 0xFF-sized pieces, then a final chunk for the remainder
+						while remaining > 0xFF:
+							output_bytecode.append((note_nibble << 4) | 0x0F)
+							output_bytecode.append(0xFF)
+							remaining -= 0xFF
+
+						if remaining:
+							# if the remainder matches a built-in duration, we can save a byte
+							if remaining in duration_128th_to_nibble:
+								final_duration_nibble = duration_128th_to_nibble[remaining]
+								output_byte = (note_nibble << 4) | final_duration_nibble
+								output_bytecode.append(output_byte)
+							else:
+								output_bytecode.append((note_nibble << 4) | 0x0F)
+								output_bytecode.append(remaining)
+
+			# non-AVR: preserve original per-note behavior
+			else:
+				output_byte = (note_nibble << 4) | duration_nibble
+				#print(f'standard note: {output_byte}')
+				output_bytecode.append(output_byte)
 
 		# process single byte commands with values
 		elif current_char in ('o', 'v'):
@@ -364,12 +492,12 @@ def process_mmml_string(input_string):
 			# volume-specific conditions
 			if current_char == 'v':
 				# 4ML has a 1-16 range, but there are only 8 possible states for the AVR player
-				if target_platform == 'AVR':
-					function_nibble = int(function_nibble / 2)
 
 				# reduce volume (useful if you want to do this globally)
-				if function_nibble > volume_reduction:
-					function_nibble = function_nibble - volume_reduction
+				if function_nibble > 16:
+					function_nibble = 16
+				if function_nibble < 1:
+					function_nibble = 1
 
 			# squash the command and value to a single byte and output
 			output_byte = (command_nibble << 4) | (function_nibble - 1)
@@ -461,8 +589,11 @@ def process_mmml_string(input_string):
 			if current_char == ']':
 				matching_loop -= 1
 
-			output_byte = command_lookup[current_char]
-			output_bytecode.append(output_byte)
+			# AVR doesn't support ties (& and ^)
+			# so don't output it to save space
+			if current_char == ']' or target_platform != 'AVR':
+				output_byte = command_lookup[current_char]
+				output_bytecode.append(output_byte)
 
 			index += 1
 

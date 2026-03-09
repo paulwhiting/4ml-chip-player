@@ -5,6 +5,7 @@
 ################################################################################
 
 import re
+import sys
 
 def transform_notes(text, original_note, target_note):	
 
@@ -40,7 +41,7 @@ transformations = [
 ]
 
 # read the input file
-input_file_path = 'input.4ml'
+input_file_path = sys.argv[1]
 with open(input_file_path, 'r') as file:
 	input_text = file.read()
 
@@ -48,8 +49,4 @@ with open(input_file_path, 'r') as file:
 processed_text = process_text(input_text, transformations)
 
 # write the processed text to an output file
-output_file_path = 'output.4ml'
-with open(output_file_path, 'w') as file:
-	file.write(processed_text)
-
-print("Processing complete. Output written to:", output_file_path)
+print(processed_text)
