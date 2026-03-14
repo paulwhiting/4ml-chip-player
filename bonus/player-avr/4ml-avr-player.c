@@ -26,9 +26,16 @@
 *                28th January 2024 (Update)
 *****************************************************************************H*/
 
+
 #include <avr/io.h>         // core avr functionality
 #include <avr/pgmspace.h>   // * * *
+#include <util/delay.h>
+
 #include "4ml-data.h"       // holds the _4ml_data[] arrays
+
+#ifdef DEBUG
+#include <stdio.h>
+#endif
 
 // stuff you can mess with
 //#define OUTPUT         0    // the PORTB hardware output pin
@@ -38,6 +45,22 @@
 #define SAMPLE_SPEED   5    // the sampler playback rate
 #define SAMPLE_LENGTH  127  // the length of the sample array
 #define MAXLOOPS       5    // the maximum number of nested loops
+
+
+#define CMD_REST    0
+#define CMD_OCTAVE 13
+#define CMD_VOLUME 14
+#define CMD_FN     15
+#define CMD_FN_LOOP_START 0
+#define CMD_FN_LOOP_END   1
+#define CMD_FN_MACRO      2
+#define CMD_FN_TEMPO      3
+#define CMD_FN_TRANSPOSE  4
+#define CMD_FN_INSTRUMENT 5
+#define CMD_FN_TIE        6
+#define CMD_FN_PAN        7
+#define CMD_FN_MISC       14
+#define CMD_FN_END        15
 
 // throw a compile-time error if the 4ML data isn't AVR compatible
 
@@ -100,26 +123,35 @@ const uint8_t sample[SAMPLE_LENGTH] PROGMEM =
 	// end (126)
 };
 
-// channel variables (grouped in arrays)
-uint8_t  out              [TOTAL_VOICES],
-         octave           [TOTAL_VOICES],
-         length           [TOTAL_VOICES],
-         volume           [TOTAL_VOICES],
-         loops_active     [TOTAL_VOICES],
-         current_length   [TOTAL_VOICES],
-         instrument       [TOTAL_VOICES];
-uint16_t data_pointer     [TOTAL_VOICES],
-         waveform         [TOTAL_VOICES],
-         pitch_counter    [TOTAL_VOICES],
-         frequency        [TOTAL_VOICES],
-         loop_duration    [MAXLOOPS][TOTAL_VOICES],
-         loop_point       [MAXLOOPS][TOTAL_VOICES],
-         pointer_location [TOTAL_VOICES];
 
-int main(void)
+// for some reason the code plays faster if this is global rather than local
+uint8_t  song_voices;
+
+// channel variables (grouped in arrays)
+uint8_t  out              [MAX_VOICES],
+		 octave           [MAX_VOICES],
+		 length           [MAX_VOICES],
+		 volume           [MAX_VOICES],
+		 loops_active     [MAX_VOICES],
+		 instrument       [MAX_VOICES];
+
+uint16_t data_pointer     [MAX_VOICES],
+		 waveform         [MAX_VOICES],
+		 pitch_counter    [MAX_VOICES],
+		 frequency        [MAX_VOICES],
+		 loop_duration    [MAXLOOPS][MAX_VOICES],
+		 loop_point       [MAXLOOPS][MAX_VOICES],
+		 pointer_location [MAX_VOICES];
+
+int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 {
-    // set clock to 8mhz for atmega328p
-    //noInterrupts();
+//#ifndef song_voices
+	song_voices = xxxsong_voices;
+	//printf("Track voices: %d\n", song_voices);
+	//printf("Track offset: 0x%x\n", song_idx);
+
+//#endif
+	//uint8_t song_voices = xxxsong_voices;
     //CLKPR = _BV(CLKPCE);
     //CLKPR = _BV(CLKPS0);
     //interrupts();
@@ -145,20 +177,29 @@ int main(void)
 	 * tune notes (due to timing errors) until every channel is assigned frequency data.
 	 * Additionally, default values are set should no volume or octave be specified */
 
-	for(uint8_t i = 0; i < TOTAL_VOICES; i++)
+	for(uint8_t i = 0; i < song_voices; i++)
 	{
-		data_pointer[i] = pgm_read_byte(&_4ml_data[(i*2)]);
+		data_pointer[i] = pgm_read_byte(_4ml_data + ((i*2)+song_idx));
 		data_pointer[i] = data_pointer[i] << 8;
-		data_pointer[i] = data_pointer[i] | pgm_read_byte(&_4ml_data[(i*2)+1]);
+		data_pointer[i] = data_pointer[i] | pgm_read_byte(&_4ml_data[(i*2)+1+song_idx]);
+		//data_pointer[i] = pgm_read_word(&_4ml_data[(i*2)]);
 
 		frequency[i]    = 255; // random frequency (won't ever be sounded)
 		volume[i]       = 1;
 		octave[i]       = 3;   // default octave : o3
 		instrument[i]   = 0;   // default instrument (not percussion)
-	}
+		out[i]          = 0;
+		length[i]       = 0;
+		loops_active[i] = 0;
 
-	// initialize output pin
-	DDRB = 0b00000001 << OUTPUT;
+		waveform[i]      = 0;
+		pitch_counter[i] = 0;
+		pointer_location[i] = 0;
+
+		//TODO: initialize
+		//loop_duration    [MAXLOOPS][MAX_VOICES],
+		//loop_point       [MAXLOOPS][MAX_VOICES],
+	}
 
 	while(1)
 	{
@@ -170,7 +211,7 @@ int main(void)
 		 * generation code to balance volume of outputs. */
 
         /* One branch per voice: out = (pitch_counter < waveform) ? high : 0 */
-        for(uint8_t voice = 0; voice < TOTAL_VOICES; voice++) {
+        for(uint8_t voice = 0; voice < song_voices; voice++) {
 			if (instrument[voice] == 0) {
 				PORTB = out[voice];
 				pitch_counter[voice] += octave[voice];
@@ -219,7 +260,7 @@ int main(void)
 			// variable tempo, sets the fastest / smallest possible clock event
 			tick_counter = tick_speed;
 
-			for(uint8_t voice = 0; voice < TOTAL_VOICES; voice++)
+			for(uint8_t voice = 0; voice < song_voices; voice++)
 			{
 				// if the note ended, start processing the next byte of data
 				if(length[voice] == 0)
@@ -231,20 +272,6 @@ int main(void)
 					buffer2 = buffer1 & 15;
 					buffer1 = buffer1 >> 4;
 
-#define CMD_REST    0
-#define CMD_OCTAVE 13
-#define CMD_VOLUME 14
-#define CMD_FN     15
-#define CMD_FN_LOOP_START 0
-#define CMD_FN_LOOP_END   1
-#define CMD_FN_MACRO      2
-#define CMD_FN_TEMPO      3
-#define CMD_FN_TRANSPOSE  4
-#define CMD_FN_INSTRUMENT 5
-#define CMD_FN_TIE        6
-#define CMD_FN_PAN        7
-#define CMD_FN_MISC       14
-#define CMD_FN_END        15
 					if(buffer1 == CMD_FN)
 					{
 						// another buffer for commands that require an additional byte
@@ -280,7 +307,7 @@ int main(void)
 						// macro
 						else if(buffer2 == CMD_FN_MACRO)
 						{
-							uint16_t off = (uint16_t)(buffer3 + TOTAL_VOICES) * 2;
+							uint16_t off = song_idx + (uint16_t)(buffer3 + song_voices) * 2;
 							pointer_location[voice] = data_pointer[voice] + 2;
 							data_pointer[voice] = (uint16_t)pgm_read_byte(&_4ml_data[off]) << 8;
 							data_pointer[voice] |= pgm_read_byte(&_4ml_data[off + 1]);
@@ -289,7 +316,8 @@ int main(void)
 						else if(buffer2 == CMD_FN_TEMPO)
 						{
 							tick_speed = buffer3 << 4;
-							switch (TOTAL_VOICES) {
+							/* // for testing tempos...
+							switch (song_voices) {
 								case 1:
 									tick_speed = 2150; // 1 channel 60 bpm
 									break;
@@ -299,7 +327,7 @@ int main(void)
 								case 3:
 									tick_speed = 540; // 3 channel 60 bpm
 									break;
-							}
+							}*/
 							data_pointer[voice] += 2;
 						}
 
@@ -340,8 +368,15 @@ int main(void)
 							// (END OF CHANNEL) ...if not, go back to the start
 							else
 							{
-								data_pointer[voice] = pgm_read_byte(&_4ml_data[(voice*2)]) << 8;
-								data_pointer[voice] |= pgm_read_byte(&_4ml_data[(voice*2)+1]);
+								// Go to the next song in the album
+								// NOTE: this happens when the shortest channel is reached,
+								// so each channel needs to be padded out to the end of the song
+								// or it will end early  
+								return 0;
+
+								// Old behavior to loop the channel indefinitely
+								//data_pointer[voice] = pgm_read_byte(&_4ml_data[(voice*2)]) << 8;
+								//data_pointer[voice] |= pgm_read_byte(&_4ml_data[(voice*2)+1]);
 							}
 						}
 
@@ -443,3 +478,63 @@ int main(void)
 }
 
 /*******************************************************************************/
+
+#ifdef DEBUG
+#include <avr/io.h>
+
+#ifndef F_CPU
+#define F_CPU 8000000UL // Define CPU frequency (e.g., 8MHz)
+#endif
+#define BAUD 9600
+#include <util/setbaud.h> // Helper to calculate UBRR values
+
+// Function to transmit a character
+int uart_putchar(char c, FILE *stream) {
+    if (c == '\n') {
+        uart_putchar('\r', stream); // Add carriage return for newlines
+    }
+    // Wait for the transmit buffer to be empty (specific register names vary by model)
+    // For general ATtiny, this part must be a software serial implementation
+    loop_until_bit_is_set(UCSR0A, UDRE0); 
+    UDR0 = c; // Put character in transmit buffer
+    return 0;
+}
+
+// Setup the standard output stream to use uart_putchar
+FILE output = FDEV_SETUP_STREAM(uart_putchar, NULL, _FDEV_SETUP_WRITE);
+
+void uart_init(void) {
+    // Hardware UART init (if available, e.g., ATtiny1634)
+    UBRR0H = UBRRH_VALUE;
+    UBRR0L = UBRRL_VALUE;
+    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00); // 8-bit data
+    UCSR0B = (1 << TXEN0); // Enable TX
+    stdout = &output; // Redirect stdout
+}
+#endif
+
+int main(void)
+{
+#ifdef DEBUG
+    // set clock to 8mhz for atmega328p
+    //CLKPR = _BV(CLKPCE);
+    //CLKPR = _BV(CLKPS0);
+    uart_init();
+#endif
+
+	// initialize output pin
+	DDRB = 0b00000001 << OUTPUT;
+
+	uint8_t album_idx = 0;
+
+	//printf("Total tracks: %d\n", TOTAL_TRACKS);
+
+	for(; album_idx < TOTAL_TRACKS; album_idx++)
+	{
+		play_song(TRACK_VOICES[album_idx], TRACK_OFFSET[album_idx]);
+        _delay_ms(1500);
+	}
+
+	return 0;
+}
+
