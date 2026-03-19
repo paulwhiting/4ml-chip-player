@@ -3,6 +3,9 @@ default:
 
 .PRECIOUS: %.4ml
 
+%.mid: %.MID
+	cp "$<" "$@"
+
 %.4ml: %.mid
 	cp "$<" tmp-input.4ml
 	. venv/bin/activate && python3 compiler/midi-to-4ml.py tmp-input.4ml > "$@"
@@ -18,7 +21,10 @@ default:
 %.4ml.avr.h: %.4ml compiler/compiler.py
 	python3 compiler/compiler.py --avr $< > $@
 
-album.4ml.avr.h: bonus/player-avr/songs/ninjagaiden.4ml bonus/player-avr/songs/wizards-and-warriors-intro.4ml
+album.4ml.avr.h: zelda.4ml z2-title.4ml z2-palace.4ml bonus/player-avr/songs/ninjagaiden.4ml bonus/player-avr/songs/wizards-and-warriors-intro.4ml mario.min.4ml
+	python3 compiler/compiler.py --avr $^ > $@
+
+album2.4ml.avr.h: n-a-z.4ml bonus/player-avr/songs/ninjagaiden.4ml
 	python3 compiler/compiler.py --avr $^ > $@
 
 %.wav: %.4ml.h

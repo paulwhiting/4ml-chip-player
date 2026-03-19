@@ -1,33 +1,33 @@
 ################################################################################
-#  FILENAME:     compiler.py
+#  FILENAME:	 compiler.py
 #  DESCRIPTION:  Mega Micro Music Macro Language (4ML) Compiler
 #
-#  NOTES:        A quick 'n dirty python-based compiler for the 4ML language.
-#                It works, but I don't trust the regex. In fact, I don't really
-#                trust any of this. See 4ml.md in the 'docs' directory for a
-#                full explanation.
+#  NOTES:		 A quick 'n dirty python-based compiler for the 4ML language.
+#				 It works, but I don't trust the regex. In fact, I don't really
+#				 trust any of this. See 4ml.md in the 'docs' directory for a
+#				 full explanation.
 # 
-#                An upgrade of:
-#                https://github.com/protodomemusic/mmml
+#				 An upgrade of:
+#				 https://github.com/protodomemusic/mmml
 #
-#                BUGS:
-#                - If you don't have any patterns, it won't compile. Dumb.
-#                - Find a neat way of unifying tempos across platforms.
-#                - Putting multiple > or < commands together will write multiple
-#                  octaves. Should really just do one.
-#                - 'p' commands should be paired with the pattern 'P' to which
-#                  they refer. For example p10 should refer to P10, even if
-#                  there are ultimately fewer than 10 patterns and all the
-#                  indexes change.
-#                - Handle error for durations like 'r1.' (which is invalid).
-#                - Handle error for r+. Or should you be allowed to sharpen a
-#                  rest? Probably. It's doing no harm.
-#                - Handle error when you write something like 'g364' (so like
-#                  when the value isn't in the lookup table).
+#				 BUGS:
+#				 - If you don't have any patterns, it won't compile. Dumb.
+#				 - Find a neat way of unifying tempos across platforms.
+#				 - Putting multiple > or < commands together will write multiple
+#				   octaves. Should really just do one.
+#				 - 'p' commands should be paired with the pattern 'P' to which
+#				   they refer. For example p10 should refer to P10, even if
+#				   there are ultimately fewer than 10 patterns and all the
+#				   indexes change.
+#				 - Handle error for durations like 'r1.' (which is invalid).
+#				 - Handle error for r+. Or should you be allowed to sharpen a
+#				   rest? Probably. It's doing no harm.
+#				 - Handle error when you write something like 'g364' (so like
+#				   when the value isn't in the lookup table).
 #
-#  AUTHOR:       Blake 'PROTODOME' Troise
-#  PLATFORM:     Command Line Application
-#  DATE:         29th July 2023
+#  AUTHOR:		 Blake 'PROTODOME' Troise
+#  PLATFORM:	 Command Line Application
+#  DATE:		 29th July 2023
 ################################################################################
 
 #############
@@ -58,14 +58,14 @@ target_platform = 'GB'
 # https://stackoverflow.com/questions/287871/how-do-i-print-colored-text-to-the-terminal
 
 class bcolors:
-	HEADER    = '\033[95m'
-	OKBLUE    = '\033[94m'
-	OKCYAN    = '\033[96m'
+	HEADER	  = '\033[95m'
+	OKBLUE	  = '\033[94m'
+	OKCYAN	  = '\033[96m'
 	OKGREEN   = '\033[92m'
 	WARNING   = '\033[93m'
-	FAIL      = '\033[91m'
-	ENDC      = '\033[0m'
-	BOLD      = '\033[1m'
+	FAIL	  = '\033[91m'
+	ENDC	  = '\033[0m'
+	BOLD	  = '\033[1m'
 	UNDERLINE = '\033[4m'
 
 ##################
@@ -127,12 +127,13 @@ def throw_warning(warning_number,additional_info):
 # construct the output file #
 #############################
 
-total_size       = 0
-album_max_channels   = 0
+total_size		 = 0
+album_max_channels	 = 0
 
 def write_mmml_header(array, output_file):
 	current_column = 0
 
+	print(array, file=sys.stderr)
 	for num in array:
 
 		if current_column == 0:
@@ -186,6 +187,7 @@ def write_mmml_body(byte_array_list, output_file):
 				if current_column == 16:
 					output_file.write("\n")
 					current_column = 0
+
 	if current_column != 0:
 		output_file.write("\n")
 
@@ -194,14 +196,22 @@ def write_mmml_body(byte_array_list, output_file):
 # convert data from string to binary #
 ######################################
 
-def process_mmml_string(input_string, output_end_channel_byte = True):
+def process_mmml_string(input_string, output_end_channel_byte = False, previous_duration = None, octave = None, volume = None, tempo = None, instrument = None):
 	index = 0
 	output_bytecode = []
 	bytecode_length = 0
+	tick_count = 0
 
-	# 4ml default values
-	previous_duration = '8'
-	previous_octave   = '3'
+	if previous_duration == None:
+		previous_duration = 8
+	if octave == None:
+		octave = 3
+	if volume == None:
+		volume = 16
+	if tempo == None:
+		tempo = 64
+	if instrument == None:
+		instrument = 1
 
 	# lookup tables so we can keep all the definitions in one place
 	command_lookup = {
@@ -212,26 +222,26 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 	}
 
 	duration_lookup = {
-		'1':   0x00, '2':  0x01, '4':  0x02, '8':  0x03, '16':  0x04, '32':  0x05, '64':  0x06,
+		'1':   0x00, '2':  0x01, '4':  0x02, '8':  0x03, '16':	0x04, '32':  0x05, '64':  0x06,
 		'128': 0x07, '2.': 0x08, '4.': 0x09, '8.': 0x0A, '16.': 0x0B, '32.': 0x0C, '64.': 0x0D
 	}
 
 	# duration (as written) to length in 128th-note units
 	duration_to_128th = {
 		'1':   128,
-		'2':    64,
-		'4':    32,
-		'8':    16,
-		'16':    8,
-		'32':    4,
-		'64':    2,
-		'128':   1,
-		'2.':   96,
-		'4.':   48,
-		'8.':   24,
-		'16.':  12,
-		'32.':   6,
-		'64.':   3,
+		'2':	64,
+		'4':	32,
+		'8':	16,
+		'16':	 8,
+		'32':	 4,
+		'64':	 2,
+		'128':	 1,
+		'2.':	96,
+		'4.':	48,
+		'8.':	24,
+		'16.':	12,
+		'32.':	 6,
+		'64.':	 3,
 	}
 
 	# inverse map: 128th-note length -> duration nibble
@@ -246,8 +256,8 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 
 		# process standard notes (r, c..b, with optional sharp)
 		if current_char in ('r','c','c+','d','d+','e','e+','f','f+','g','g+','a','a+','b','b+',):
-			note_duration   = ''
-			note_nibble     = 0
+			note_duration	= ''
+			note_nibble		= 0
 			duration_nibble = 0
 
 			index += 1
@@ -273,7 +283,7 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 				note_duration = previous_duration
 
 			# fetch the correct command bytes
-			note_nibble     = command_lookup  [current_char]
+			note_nibble		= command_lookup  [current_char]
 			duration_nibble = duration_lookup [note_duration]
 
 			# check if in bounds
@@ -285,7 +295,6 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 			if note_duration not in duration_to_128th:
 				throw_error(5, current_char, note_duration)
 			total_128 = duration_to_128th[note_duration]
-			last_duration = note_duration
 			base_letter = current_char[0]
 
 			scan_index = index
@@ -318,30 +327,32 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 					break
 
 				# parse optional duration for this subsequent note
-				next_duration = ''
-				while tmp2 < len(input_string) and input_string[tmp2].isdigit() and len(next_duration) < 3:
-					next_duration += input_string[tmp2]
+				note_duration = ''
+				while tmp2 < len(input_string) and input_string[tmp2].isdigit() and len(note_duration) < 3:
+					note_duration += input_string[tmp2]
 					tmp2 += 1
 
 				if tmp2 < len(input_string) and input_string[tmp2] == '.':
-					next_duration = next_duration + '.'
+					note_duration = note_duration + '.'
 					tmp2 += 1
 
 				# if no duration given, repeat the last one
-				if next_duration:
-					last_duration = next_duration
-					previous_duration = next_duration
+				if note_duration:
+					previous_duration = note_duration
 				else:
-					next_duration = last_duration
+					note_duration = previous_duration
 
-				if next_duration not in duration_to_128th:
-					throw_error(5, current_char, next_duration)
+				if note_duration not in duration_to_128th:
+					throw_error(5, current_char, note_duration)
 
-				total_128 += duration_to_128th[next_duration]
+				total_128 += duration_to_128th[note_duration]
 				scan_index = tmp2
 
 			# advance main index past everything we collapsed
 			index = scan_index
+
+			# track the overall length of the composition thus far
+			tick_count += total_128
 
 			# encode the accumulated duration using the smallest number of command bytes
 			# First preference: a single built-in duration
@@ -375,8 +386,8 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 
 		# process single byte commands with values
 		elif current_char in ('o', 'v'):
-			function_value  = ''
-			command_nibble  = 0
+			function_value	= ''
+			command_nibble	= 0
 			function_nibble = 0
 
 			index += 1
@@ -392,7 +403,7 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 
 			# if it's an octave, store the value for the '<' and '>' commands
 			if current_char == 'o':
-				previous_octave = int(function_value) - 1
+				octave = int(function_value)
 
 			# get the right command byte
 			command_nibble = command_lookup[current_char]
@@ -411,6 +422,8 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 					function_nibble = 16
 				if function_nibble < 1:
 					function_nibble = 1
+
+				volume = function_nibble
 
 			# squash the command and value to a single byte and output
 			output_byte = (command_nibble << 4) | (function_nibble - 1)
@@ -447,6 +460,12 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 			command_byte = command_lookup[current_char]
 			function_byte = int(function_value)
 
+			if current_char == 't':
+				tempo = function_byte
+
+			if current_char in ['i', '@']:
+				instrument = function_byte
+
 			# apply negative sign if necessary
 			if is_negative:
 				function_byte *= -1
@@ -481,15 +500,16 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 
 		# process relative octave jumps
 		elif current_char in ('<', '>'):
-			octave_nibble = 0
 			if current_char == '<':
-				octave_nibble = int(previous_octave) - 1
-			elif current_char == '>':
-				octave_nibble = int(previous_octave) + 1
-			previous_octave = str(octave_nibble)
+				octave_nibble = octave - 1
+			else:
+				octave_nibble = octave + 1
+			octave = octave_nibble
+
+			# TODO: verify octave range
 
 			# squash the command and value to a single byte and output
-			output_byte = (command_lookup['o'] << 4) | octave_nibble
+			output_byte = (command_lookup['o'] << 4) | octave_nibble - 1
 			output_bytecode.append(output_byte)
 
 			index += 1
@@ -526,148 +546,72 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 		# end the sequence with a secret channel/pattern end event
 		output_bytecode.append(0xFF)
 
-	return output_bytecode
+	return {'bytes': output_bytecode, 'ticks': tick_count, 'previous_duration': previous_duration, 'octave': octave, 'volume': volume or None, 'tempo': tempo, 'instrument': instrument}
 
 
 ###################
 # import the file #
 ###################
 
+def parse_4ml_file(input_file):
+	"""Remove comments and whitespace, return (channel_strings, pattern_strings).
+	Channel order preserved by C0, C1, ...; pattern by P1, P2, ...
+	"""
+
+	# read the contents of the file
+	try:
+		with open(input_file, "r") as f:
+			s = f.read()
+	except FileNotFoundError:
+		log(f"File not found: {path}")
+		sys.exit(1)
+		s = f.read()
+
+	# remove comments
+	s = re.sub(r";.*?(?=\n|$)", "\n", s)
+	s = re.sub(r"/\*[\s\S]*?\*/", "", s)
+
+	# remove whitespace
+	s = re.sub(r"\s+", "", s)
+
+	pattern = re.compile(r"C(\d+)")
+	channel_nums = sorted(set(int(m.group(1)) for m in pattern.finditer(s)), reverse=False)
+	max_c = max(channel_nums) if channel_nums else -1
+
+	channel_data = []
+	for x in range(max_c + 1):
+		# Match Cx (not Cx0) then content until next C or P
+		parts = re.findall(rf"C{x}(?!\d)([^CP]*)", s)
+		channel_data.append("".join(parts))
+
+	while "" in channel_data:
+		channel_data.remove("")
+
+	pattern_pat = re.compile(r"P(\d+)")
+	pattern_nums = sorted(set(int(m.group(1)) for m in pattern_pat.finditer(s)))
+	max_p = max(pattern_nums) if pattern_nums else -1
+
+	pattern_data = []
+	for x in range(max_p + 1):
+		parts = re.findall(rf"P{x}(?!\d)([^PC]*)", s)
+		pattern_data.append("".join(parts))
+
+	while "" in pattern_data:
+		pattern_data.remove("")
+
+	return {"channels": channel_data, "patterns": pattern_data}
+
+
 def process_file(input_file):
 	global total_size
 	global album_max_channels
 
-	try:
-		# open the text file in read mode
-		with open(input_file, 'r') as f:
+	data = parse_4ml_file(input_file)
 
-			# read the contents of the file
-			mmml_data_string = f.read()
+	channel_count = len(data["channels"])
+	pattern_count = len(data["patterns"])
 
-			# delete ; comments
-			mmml_data_string = re.sub(';.*?\n', '', mmml_data_string)
-			mmml_data_string = re.sub(';.*?\Z', '', mmml_data_string)
-
-			# delete /* */ comments
-			mmml_data_string = re.sub('/\\*([\s\S]*?)\\*/', '', mmml_data_string, re.MULTILINE)
-
-			# remove all remaining whitespace
-			mmml_data_string = re.sub(r'\s', '', mmml_data_string)
-
-	except FileNotFoundError:
-		throw_error(0,0,0)
-
-	####################
-	# get channel data #
-	####################
-
-	print(f"{bcolors.OKBLUE}Detecting 4ML document structure...\n{bcolors.ENDC}", file=sys.stderr)
-
-	# get highest number after C
-	# the highest number is the total number of channels
-	pattern        = r'C(\d+)'
-	matches        = re.findall(pattern, mmml_data_string)
-	max_channel    = max(map(int, matches))
-	track_channels = 0
-
-	# put channel data together contiguously
-	channel_data = []
-
-	for x in range(max_channel + 1):
-		# match from Cx to the next C or P
-		matches = re.findall(fr'C{x}([^CP]+)', mmml_data_string)
-
-		# C30 will match for both C3 and C30, so remove any data that starts with a
-		# digit. Not sure the best way of doing this in the regex - which would have
-		# been simpler.
-		matches = [match for match in matches if not match[0].isdigit()]
-		results = "".join(matches)
-		channel_data.append(results)
-
-	# we need the blank results for ordering channels hierarchically
-	# but they need to be removed to get the actual amount
-	while '' in channel_data:
-		channel_data.remove('')
-
-	# how many channels are we left with?
-	track_channels = len(channel_data)
-
-	print(f"Found {track_channels} channel(s).", file=sys.stderr)
-
-	# 4ml players use 8-bit numbers
-	if track_channels > 256:
-		throw_error(1,0,0)
-
-	if track_channels > album_max_channels:
-		album_max_channels = track_channels
-
-	####################
-	# get pattern data #
-	####################
-
-	# get highest number after P
-	# the highest number is the total number of patterns
-	pattern         = r'P(\d+)'
-	matches         = re.findall(pattern, mmml_data_string)
-	pattern_numbers = []
-
-	for match in matches:
-		current_pattern = int(match)
-
-		# 4ml players use 8-bit numbers
-		if current_pattern > 256:
-			throw_error(2,0,0)
-
-		if current_pattern == 0:
-			throw_error(11,0,0)
-
-		if current_pattern in pattern_numbers:
-			# if the pattern number is already in the list, then it's a repeated
-			# pattern, so throw a warning.
-			throw_warning(0,current_pattern)
-		else:
-			pattern_numbers.append(current_pattern)
-
-	if pattern_numbers:
-		max_patterns = max(pattern_numbers)
-	else:
-		max_patterns = 0
-
-	# put pattern data together contiguously
-	pattern_data = []
-
-	for x in range(max_patterns + 1):
-		# match from PX to the next C or P
-		matches = re.findall(fr'P{x}([^PC]+)', mmml_data_string)
-
-		# Filter out matches that start with a digit
-		matches = [match for match in matches if not match[0].isdigit()]
-
-		results = "".join(matches)
-		pattern_data.append(results)
-
-	# we need the blank results for ordering channels hierarchically
-	# but they need to be removed to get the actual amount
-	while '' in pattern_data:
-		pattern_data.remove('')
-
-	# how many channels are we left with?
-	total_patterns = len(pattern_data)
-
-	print(f"Found {total_patterns} pattern(s).", file=sys.stderr)
-
-	# hmm, the patterns are no longer synced 1 to 1
-	if total_patterns != max_patterns:
-		throw_warning(2,0)
-
-	# combine channel and pattern data
-	mmml_data_string = channel_data + pattern_data
-
-	print(f"{track_channels + total_patterns} sequences total.", file=sys.stderr)
-
-	########################
-	# start the conversion #
-	########################
+	data_array = data["channels"] + data["patterns"]
 
 	print(f"{bcolors.OKBLUE}\nBeginning compilation...\n{bcolors.ENDC}", file=sys.stderr)
 
@@ -677,14 +621,14 @@ def process_file(input_file):
 
 	track_offset = total_size
 	# calculate the total size of the header
-	total_size += (track_channels + total_patterns) * 2
+	total_size += (channel_count + pattern_count) * 2
 
 	# loop through each string in the array to build our data file
-	for index, string in enumerate(mmml_data_string):
-		print(f"Sequence {index + 1} of {len(mmml_data_string)}", file=sys.stderr)
+	for index, string in enumerate(data_array):
+		print(f"Sequence {index + 1} of {len(data_array)}", file=sys.stderr)
 
 		# add the first sequence data to the output array
-		mmml_data_bytes.append(process_mmml_string(string))
+		mmml_data_bytes.append(process_mmml_string(string, True)['bytes'])
 
 		# update the header with the offset to this track
 		mmml_data_header.append(total_size)
@@ -697,7 +641,7 @@ def process_file(input_file):
 		#print(string, file=sys.stderr)
 		#print(mmml_data_bytes[index], file=sys.stderr)
 
-	return {"file":input_file, "header": mmml_data_header, "data": mmml_data_bytes, "channels": track_channels, "offset": track_offset}
+	return {"file":input_file, "header": mmml_data_header, "data": mmml_data_bytes, "channels": channel_count, "offset": track_offset}
 
 
 #####################
@@ -738,6 +682,7 @@ def main():
 	print(f'const uint8_t TRACK_VOICES[] = {{{", ".join([str(track['channels']) for track in album])}}};')
 	print(f'const uint16_t TRACK_OFFSET[] = {{{", ".join([str(track["offset"]) for track in album])}}};\n')
 
+	album_max_channels = max(track["channels"] for track in album)
 	print(f"#define MAX_VOICES {album_max_channels}")
 
 	# if it's AVR, we'll need to store it in program memory

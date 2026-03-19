@@ -13,7 +13,9 @@ import sys
 import time
 from collections import defaultdict
 from typing import Callable
+
 from compiler import process_mmml_string
+from utils import tokenize, tokens_to_string
 
 # 4ML supports pattern numbers 0-255 (256 patterns total)
 MAX_PATTERNS = 256
@@ -126,172 +128,6 @@ def expand_patterns(channel_str: str, pattern_data: list[str], depth: int = 0) -
 	return "".join(out)
 
 
-# --- Tokenizer: one 4ML element per token (for repeat detection) ---
-
-def tokenize(s: str) -> list[str]:
-	"""Split 4ML string into list of tokens (notes, rests, o, v, t, @, K, s, F, &, ^, <, >).
-	Never splits numbers: each numeric suffix (duration, octave, volume, etc.) is consumed in full.
-	"""
-	tokens = []
-	i = 0
-	while i < len(s):
-		c = s[i]
-
-		# Note or rest: r / c,d,e,f,g,a,b (optional +/#) then optional duration (1-3 digits, then optional .)
-		# Tie (&/^) plus following note are merged so we never split a tied group (e.g. g1&g2).
-		# Never split numbers: consume full duration (max 3 digits for 4ML 1-128) per note.
-		if c == "r" or c in "cdefgab":
-			tok = c
-			i += 1
-			if i < len(s) and s[i] in "+#":
-				tok += s[i]
-				i += 1
-			nd = 0
-			while i < len(s) and s[i].isdigit() and nd < 3:
-				tok += s[i]
-				i += 1
-				nd += 1
-			if i < len(s) and s[i] == ".":
-				tok += s[i]
-				i += 1
-			# Merge tie + next note into same token so g1&g2 is one token (cannot split)
-			while i < len(s) and s[i] in "&^":
-				tok += s[i]
-				i += 1
-				if i >= len(s) or s[i] not in "rcdefgab":
-					break
-				tie_note = s[i]
-				tok += tie_note
-				i += 1
-				if i < len(s) and s[i] in "+#":
-					tok += s[i]
-					i += 1
-				nd = 0
-				while i < len(s) and s[i].isdigit() and nd < 3:
-					tok += s[i]
-					i += 1
-					nd += 1
-				if i < len(s) and s[i] == ".":
-					tok += s[i]
-					i += 1
-			tokens.append(tok)
-			continue
-
-		if c == "o":
-			tok = "o"
-			i += 1
-			while i < len(s) and s[i].isdigit():
-				tok += s[i]
-				i += 1
-			tokens.append(tok)
-			continue
-
-		if c in "<>":
-			tokens.append(c)
-			i += 1
-			continue
-
-		if c in "v@t":
-			tok = c
-			i += 1
-			while i < len(s) and s[i].isdigit():
-				tok += s[i]
-				i += 1
-			tokens.append(tok)
-			continue
-
-		if c in "KsF":
-			tok = c
-			i += 1
-			if i < len(s) and s[i] == "-":
-				tok += s[i]
-				i += 1
-			while i < len(s) and s[i].isdigit():
-				tok += s[i]
-				i += 1
-			tokens.append(tok)
-			continue
-
-		if c == "s":
-			tok = "s"
-			i += 1
-			if i < len(s) and s[i] == "-":
-				tok += s[i]
-				i += 1
-			while i < len(s) and s[i].isdigit():
-				tok += s[i]
-				i += 1
-			tokens.append(tok)
-			continue
-
-		# Standalone &/^ (e.g. after v8): consume with following note so we get "&g2" as one token
-		if c in "&^":
-			tok = c
-			i += 1
-			if i < len(s) and s[i] in "rcdefgab":
-				note_char = s[i]
-				tok += note_char
-				i += 1
-				if i < len(s) and s[i] in "+#":
-					tok += s[i]
-					i += 1
-				nd = 0
-				while i < len(s) and s[i].isdigit() and nd < 3:
-					tok += s[i]
-					i += 1
-					nd += 1
-				if i < len(s) and s[i] == ".":
-					tok += s[i]
-					i += 1
-			tokens.append(tok)
-			continue
-
-		# Loop: [N ... ] is one indivisible token (pattern cannot split a loop)
-		if c == "[":
-			start_loop = i
-			i += 1
-			while i < len(s) and s[i].isdigit():
-				i += 1
-			depth = 1
-			while i < len(s) and depth > 0:
-				if s[i] == "[":
-					depth += 1
-				elif s[i] == "]":
-					depth -= 1
-				i += 1
-			tokens.append(s[start_loop:i])
-			continue
-		if c == "]":
-			i += 1
-			continue
-
-		if c == "p":
-			tok = "p"
-			i += 1
-			while i < len(s) and s[i].isdigit():
-				tok += s[i]
-				i += 1
-			tokens.append(tok)
-			continue
-
-		if c == "i":
-			tok = "i"
-			i += 1
-			while i < len(s) and s[i].isdigit():
-				tok += s[i]
-				i += 1
-			tokens.append(tok)
-			continue
-
-		i += 1
-
-	return tokens
-
-
-def tokens_to_string(tokens: list[str]) -> str:
-	"""Serialize token list back to 4ML (no spaces; caller can add for readability)."""
-	return " ".join(tokens)
-
 
 # --- Repeat detection and pattern extraction ---
 
@@ -329,7 +165,7 @@ def compute_savings(
 	if K < 2:
 		return 0
 	seq_str = tokens_to_string(list(seq))
-	compiled_bytes = process_mmml_string(seq_str, False)
+	compiled_bytes = process_mmml_string(seq_str, False)['bytes']
 	orig = K * len(compiled_bytes)
 	pattern_ref = 2  # 2 bytes per pattern call
 	pattern_def = 2 + len(compiled_bytes)  # 2 bytes for the necessary header entry
