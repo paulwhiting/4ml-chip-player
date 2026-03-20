@@ -324,7 +324,6 @@
   }
 
   function noteIdxToName(noteIdx) {
-    if (noteIdx < 0) return null;
     const midi = noteIdx + 47;
     const noteNames2 = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
     const octave = Math.floor(midi / 12) - 1;
