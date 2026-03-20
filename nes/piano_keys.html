@@ -1005,6 +1005,7 @@
       row.appendChild(details);
       row.addEventListener('click', (e) => {
         if (e.target.tagName === 'BUTTON') return;
+        if (details.contains(e.target)) return;
         details.classList.toggle('visible');
       });
       recordingsListEl.appendChild(row);
