@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Piano Keys</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: linear-gradient(160deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+      font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+      color: #e8e8e8;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      margin: 0 0 0.5rem;
+      color: #a8dadc;
+    }
+    .instructions {
+      font-size: 0.8rem;
+      opacity: 0.85;
+      text-align: center;
+      max-width: 520px;
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .piano-wrap {
+      position: relative;
+      width: 100%;
+      max-width: 720px;
+      background: linear-gradient(180deg, #2a1810 0%, #1a1008 100%);
+      padding: 12px 8px 16px;
+      border-radius: 8px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06);
+      touch-action: none;
+    }
+    .white-keys {
+      display: flex;
+      position: relative;
+      height: 140px;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .piano-key.white {
+      flex: 1;
+      min-width: 0;
+      height: 100%;
+      background: linear-gradient(180deg, #fffefb 0%, #f5f0e8 60%, #e8e0d5 100%);
+      border: 1px solid #ccc;
+      border-radius: 0 0 5px 5px;
+      margin: 0 1px 0 0;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding-bottom: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #555;
+      user-select: none;
+      transition: transform 0.08s ease-out, box-shadow 0.08s ease-out, background 0.08s;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+    }
+    .piano-key.white:last-child { margin-right: 0; }
+    .piano-key.white {
+      cursor: pointer;
+    }
+    .piano-key.white.depressed {
+      transform: translateY(4px);
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.1), inset 0 4px 8px rgba(0,0,0,0.2);
+      background: linear-gradient(180deg, #e8e0d5 0%, #ddd5c8 100%);
+    }
+    .black-keys {
+      position: absolute;
+      top: 12px;
+      left: 8px;
+      right: 8px;
+      height: 88px;
+      pointer-events: none;
+    }
+    .black-keys .piano-key {
+      pointer-events: auto;
+    }
+    .piano-key.black {
+      position: absolute;
+      height: 88px;
+      cursor: pointer;
+      background: linear-gradient(180deg, #2a2a2a 0%, #1a1a1a 50%, #0d0d0d 100%);
+      border: 1px solid #111;
+      border-radius: 0 0 4px 4px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding-bottom: 6px;
+      font-size: 10px;
+      font-weight: 600;
+      color: #888;
+      user-select: none;
+      z-index: 1;
+      transition: transform 0.08s ease-out, box-shadow 0.08s ease-out, background 0.08s;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.4);
+    }
+    .piano-key.black.depressed {
+      transform: translateY(3px);
+      box-shadow: 0 0 0 1px rgba(0,0,0,0.3), inset 0 3px 6px rgba(0,0,0,0.5);
+      background: linear-gradient(180deg, #1a1a1a 0%, #0a0a0a 100%);
+    }
+    .note-display {
+      min-height: 1.8em;
+      margin-top: 1rem;
+      font-size: 0.9rem;
+      color: #a8dadc;
+    }
+    .note-display kbd {
+      background: #2d2d44;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-right: 4px;
+    }
+    .transport {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .transport button {
+      font-family: inherit;
+      font-size: 0.9rem;
+      padding: 0.4rem 0.9rem;
+      border-radius: 6px;
+      border: 1px solid #444;
+      background: #2d2d44;
+      color: #e8e8e8;
+      cursor: pointer;
+    }
+    .transport button:hover { background: #3d3d54; }
+    .transport button.record { color: #e88; }
+    .transport button.record.active { background: #6a2020; border-color: #a44; }
+    .transport button.play { color: #8e8; }
+    .transport button.play:disabled { opacity: 0.5; cursor: not-allowed; }
+    .transport button.playAll { color: #8ef; }
+    .transport button.playAll:disabled { opacity: 0.5; cursor: not-allowed; }
+    .recordings-toolbar button.playAll { color: #8ef; }
+    .recording-indicator {
+      display: none;
+      align-items: center;
+      gap: 0.5rem;
+      color: #f66;
+      font-size: 0.9rem;
+    }
+    .recording-indicator.visible { display: flex; }
+    .recording-indicator .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #f44;
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink { 50% { opacity: 0.4; } }
+    .recording-timer { font-variant-numeric: tabular-nums; }
+    .recordings-section {
+      width: 100%;
+      max-width: 560px;
+      margin-top: 1.5rem;
+    }
+    .recordings-section h2 { font-size: 1rem; margin: 0 0 0.5rem; color: #a8dadc; }
+    .recording-item {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0.6rem;
+      margin-bottom: 0.25rem;
+      background: #1e2a3a;
+      border-radius: 6px;
+      border: 1px solid #2d3d4d;
+      cursor: pointer;
+    }
+    .recording-item:hover { background: #253340; }
+    .recording-item.playing { border-color: #6a8; }
+    .recording-item .timestamp { flex: 1; font-variant-numeric: tabular-nums; font-size: 0.85rem; }
+    .recording-item .duration { font-size: 0.8rem; opacity: 0.85; margin-left: 0.25rem; }
+    .recording-item .progress-wrap {
+      flex: 1;
+      min-width: 80px;
+      height: 6px;
+      background: #0d1b2a;
+      border-radius: 3px;
+      overflow: hidden;
+      margin: 0 0.5rem;
+    }
+    .recording-item .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: #6a8;
+      border-radius: 3px;
+      transition: width 0.05s linear;
+    }
+    .recording-item .play-time { font-variant-numeric: tabular-nums; font-size: 0.8rem; min-width: 4em; }
+    .recording-item button {
+      font-family: inherit;
+      font-size: 0.8rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      border: 1px solid #444;
+      background: #2d2d44;
+      color: #e8e8e8;
+      cursor: pointer;
+    }
+    .recording-item button:hover { background: #3d3d54; }
+    .recording-item button.delete { color: #e88; }
+    .recordings-toolbar { margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem; }
+    .upload-label { cursor: pointer; }
+    .btn-download-icon { display: inline-block; width: 1em; height: 1em; vertical-align: -0.15em; }
+    .recording-item .btn-4ml { display: none; }
+    .upload-btn {
+      display: inline-block;
+      font-family: inherit;
+      font-size: 0.85rem;
+      padding: 0.35rem 0.7rem;
+      border-radius: 6px;
+      border: 1px solid #444;
+      background: #2d2d44;
+      color: #e8e8e8;
+    }
+    .upload-btn:hover { background: #3d3d54; }
+    .recording-details {
+      display: none;
+      flex-basis: 100%;
+      padding: 0.6rem 0.75rem;
+      margin-top: 0.25rem;
+      margin-left: 0;
+      background: #0d1b2a;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      line-height: 1.5;
+      border-left: 3px solid #a8dadc;
+    }
+    .recording-details.visible { display: block; }
+    .recording-details .notes-text { white-space: pre-wrap; word-break: break-word; margin-top: 0.25rem; }
+    footer {
+      margin-top: 1.5rem;
+      font-size: 0.75rem;
+      opacity: 0.7;
+    }
+  </style>
+</head>
+<body>
+  <h1>Piano Keys</h1>
+  <p class="instructions">
+    White: lower row (z–/) and top row (q–\). Black: home row (s–;) and number row (2–0). ` or ~ record, Escape stop. Click a recording to see details; use its Play button to play. Use "Play All" to play all recordings simultaneously.
+  </p>
+  <div class="piano-wrap" id="piano"></div>
+  <div class="note-display" id="noteDisplay"></div>
+  <div class="transport">
+    <button type="button" class="record" id="recordBtn">Record</button>
+    <div class="recording-indicator" id="recordingIndicator">
+      <span class="dot"></span>
+      <span>Recording</span>
+      <span class="recording-timer" id="recordingTimer">0:00.0</span>
+    </div>
+  </div>
+  <div class="recordings-section">
+    <h2>Recordings</h2>
+    <div class="recordings-toolbar">
+      <label class="upload-label" title="Upload recording (.piano.json)">
+        <input type="file" id="uploadRecording" accept=".json,.piano.json,.4ml,.txt,application/json,text/plain" style="display:none">
+        <span class="upload-btn">Upload</span>
+      </label>
+      <button type="button" class="playAll" id="playAllBtn" disabled>Play All</button>
+    </div>
+    <div id="recordingsList"></div>
+  </div>
+  <footer>Click or focus here, then use your keyboard. First key press may unlock audio.</footer>
+
+  <script>
+(function() {
+  const NOTE_NAMES = [
+    "B2", "C3", "C#3", "D3", "D#3", "E3", "F3", "F#3", "G3", "G#3", "A3", "A#3", "B3",
+    "C4", "C#4", "D4", "D#4", "E4", "F4", "F#4", "G4", "G#4", "A4", "A#4", "B4", "C5",
+    "C#5", "D5", "D#5", "E5", "F5", "F#5", "G5", "G#5", "A5", "A#5", "B5", "C6"
+  ];
+
+  const WHITE_NOTE_INDICES = [1,3,5,6,8,10,12,13,15,17,18,20,22,24,25,27,29,30,32,34,35,37];
+  const BLACK_NOTE_INDICES = [0,2,4,7,9,11,14,16,19,21,23,26,28,31,33,36];
+
+  const KEY_TO_NOTE = {};
+  const LOWER_ROW_WHITE = "zxcvbnm,./";
+  const LOWER_ROW_WHITE_NOTES = [1,3,5,6,8,10,12,13,15,17];
+  LOWER_ROW_WHITE.split('').forEach((k, i) => { KEY_TO_NOTE[k] = LOWER_ROW_WHITE_NOTES[i]; });
+
+  const TOP_ROW_WHITE = "qwertyuiop[]\\";
+  const TOP_ROW_WHITE_NOTES = [18,20,22,24,25,27,29,30,32,34,35,37];
+  TOP_ROW_WHITE.split('').forEach((k, i) => { KEY_TO_NOTE[k] = TOP_ROW_WHITE_NOTES[i]; });
+
+  const HOME_ROW_BLACK = "sdfghjkl;";
+  const HOME_ROW_BLACK_NOTES = [2,4,null,7,9,11,null,14,16];
+  HOME_ROW_BLACK.split('').forEach((k, i) => { if (HOME_ROW_BLACK_NOTES[i] != null) KEY_TO_NOTE[k] = HOME_ROW_BLACK_NOTES[i]; });
+
+  const NUMBER_ROW_BLACK = "234567890";
+  const NUMBER_ROW_BLACK_NOTES = [19,21,23,null,26,28,null,31,33];
+  NUMBER_ROW_BLACK.split('').forEach((k, i) => { if (NUMBER_ROW_BLACK_NOTES[i] != null) KEY_TO_NOTE[k] = NUMBER_ROW_BLACK_NOTES[i]; });
+
+  KEY_TO_NOTE["-"] = 36;
+  KEY_TO_NOTE["["] = 35;
+
+  function noteNameToFreq(name) {
+    const sharp = name.includes('#') ? 1 : 0;
+    const letter = name[0];
+    const octave = parseInt(name[name.length - 1], 10);
+    const offsets = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
+    const midi = 60 + (octave - 4) * 12 + offsets[letter] + sharp;
+    return 440 * Math.pow(2, (midi - 69) / 12);
+  }
+
+  let audioContext = null;
+  const activeOscillators = {};
+
+  function getAudioContext() {
+    if (!audioContext) audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    return audioContext;
+  }
+
+  function playNote(noteIdx) {
+    if (activeOscillators[noteIdx]) return;
+    const ctx = getAudioContext();
+    if (ctx.state === 'suspended') ctx.resume();
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+    gain.connect(ctx.destination);
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(noteNameToFreq(NOTE_NAMES[noteIdx]), ctx.currentTime);
+    osc.connect(gain);
+    osc.start(ctx.currentTime);
+
+    activeOscillators[noteIdx] = { oscillator: osc, gain };
+  }
+
+  function stopNote(noteIdx) {
+    const obj = activeOscillators[noteIdx];
+    if (!obj) return;
+    const ctx = getAudioContext();
+    const t = ctx.currentTime;
+    obj.gain.gain.cancelScheduledValues(t);
+    obj.gain.gain.setValueAtTime(0.2, t);
+    obj.gain.gain.setTargetAtTime(0.0001, t, 0.05);
+    obj.gain.gain.setValueAtTime(0.0001, t + 0.3);
+    obj.oscillator.stop(t + 0.35);
+    delete activeOscillators[noteIdx];
+  }
+
+  function stopAll() {
+    Object.keys(activeOscillators).forEach(n => stopNote(parseInt(n, 10)));
+  }
+
+  const NOTE_TO_KEY = {};
+  Object.entries(KEY_TO_NOTE).forEach(([key, noteIdx]) => { NOTE_TO_KEY[noteIdx] = key; });
+
+  const noteIdxToEl = {};
+  const pianoEl = document.getElementById('piano');
+  const noteDisplayEl = document.getElementById('noteDisplay');
+
+  const WHITE_NOTE_ORDER = [1,3,5,6,8,10,12,13,15,17,18,20,22,24,25,27,29,30,32,34,35,37];
+  const NUM_WHITE_KEYS = WHITE_NOTE_ORDER.length;
+  const BLACK_NOTE_POSITIONS = [
+    { noteIdx: 2,  left: 0.65 },  { noteIdx: 4,  left: 1.65 },
+    { noteIdx: 7,  left: 3.65 },  { noteIdx: 9,  left: 4.65 },  { noteIdx: 11, left: 5.65 },
+    { noteIdx: 14, left: 7.65 },  { noteIdx: 16, left: 8.65 },
+    { noteIdx: 19, left: 10.65 }, { noteIdx: 21, left: 11.65 }, { noteIdx: 23, left: 12.65 },
+    { noteIdx: 26, left: 14.65 }, { noteIdx: 28, left: 15.65 },
+    { noteIdx: 31, left: 17.65 }, { noteIdx: 33, left: 18.65 }, { noteIdx: 36, left: 19.65 }
+  ].map(o => ({ ...o, width: 0.55 }));
+
+  function renderKeys() {
+    pianoEl.innerHTML = '';
+    const whiteRow = document.createElement('div');
+    whiteRow.className = 'white-keys';
+    WHITE_NOTE_ORDER.forEach(noteIdx => {
+      const el = document.createElement('div');
+      el.className = 'piano-key white';
+      el.dataset.noteIdx = String(noteIdx);
+      el.textContent = NOTE_TO_KEY[noteIdx] || '';
+      noteIdxToEl[noteIdx] = el;
+      whiteRow.appendChild(el);
+    });
+    pianoEl.appendChild(whiteRow);
+
+    const blackRow = document.createElement('div');
+    blackRow.className = 'black-keys';
+    BLACK_NOTE_POSITIONS.forEach(({ noteIdx, left, width }) => {
+      const el = document.createElement('div');
+      el.className = 'piano-key black';
+      el.dataset.noteIdx = String(noteIdx);
+      el.textContent = NOTE_TO_KEY[noteIdx] || '';
+      const pctLeft = (left / NUM_WHITE_KEYS) * 100;
+      const pctWidth = (width / NUM_WHITE_KEYS) * 100;
+      el.style.left = pctLeft + '%';
+      el.style.width = pctWidth + '%';
+      noteIdxToEl[noteIdx] = el;
+      blackRow.appendChild(el);
+    });
+    pianoEl.appendChild(blackRow);
+  }
+
+  function updateNoteDisplay() {
+    const active = Object.keys(activeOscillators).map(n => NOTE_NAMES[parseInt(n, 10)]);
+    noteDisplayEl.innerHTML = '';
+    if (active.length) {
+      noteDisplayEl.append('Playing: ');
+      active.forEach(note => {
+        const k = document.createElement('kbd');
+        k.textContent = note;
+        noteDisplayEl.appendChild(k);
+      });
+    }
+  }
+
+  function setKeyDepressed(noteIdx, depressed) {
+    const el = noteIdxToEl[noteIdx];
+    if (el) el.classList.toggle('depressed', depressed);
+  }
+
+  let recordedEvents = [];
+  let isRecording = false;
+  let recordStartTime = 0;
+  let recordTimerId = null;
+  let isPlaying = false;
+  let playbackFrameId = null;
+  let playingRecordingId = null;
+  let isPlayingAll = false;
+  let playAllFrameId = null;
+  const playAllState = {};
+  const recordingsList = [];
+  const recordBtn = document.getElementById('recordBtn');
+  const recordingIndicator = document.getElementById('recordingIndicator');
+  const recordingTimerEl = document.getElementById('recordingTimer');
+  const recordingsListEl = document.getElementById('recordingsList');
+
+  function formatTime(ms) {
+    const s = ms / 1000;
+    const m = Math.floor(s / 60);
+    const secs = (s % 60).toFixed(1);
+    return m + ':' + (s % 60 < 10 ? '0' : '') + secs;
+  }
+
+  function formatTimestamp(d) {
+    const y = d.getFullYear(), mo = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+    const h = String(d.getHours()).padStart(2, '0'), min = String(d.getMinutes()).padStart(2, '0'), sec = String(d.getSeconds()).padStart(2, '0');
+    return y + '-' + mo + '-' + day + ' ' + h + ':' + min + ':' + sec;
+  }
+
+  function getRecordingDurationMs(events) {
+    if (!events.length) return 0;
+    const maxT = Math.max(...events.map(e => e.t));
+    return maxT + 300;
+  }
+
+  function getNotesText(events) {
+    const sorted = events.slice().sort((a, b) => a.t - b.t);
+    const lines = [];
+    sorted.forEach(ev => {
+      if (ev.on) lines.push(formatTime(ev.t) + '  ' + NOTE_NAMES[ev.noteIdx]);
+    });
+    return lines.length ? lines.join('\n') : '(no notes)';
+  }
+
+  const NOTE_4ML = ['c','c+','d','d+','e','f','f+','g','g+','a','a+','b'];
+  const DURATION_MS_60BPM = [4000, 2000, 1000, 500, 250, 125, 62.5, 31.25];
+  const DURATION_4ML = [1, 2, 4, 8, 16, 32, 64, 128];
+
+  function noteIdxTo4ML(noteIdx) {
+    if (noteIdx < 1 || noteIdx > 37) return null;
+    const octave = Math.floor((noteIdx - 1) / 12) + 3;
+    const letter = NOTE_4ML[(noteIdx - 1) % 12];
+    return { octave, letter };
+  }
+
+  function msTo4MLDuration(ms) {
+    let best = 4;
+    let bestDiff = Infinity;
+    for (let i = 0; i < DURATION_MS_60BPM.length; i++) {
+      const d = Math.abs(DURATION_MS_60BPM[i] - ms);
+      if (d < bestDiff) { bestDiff = d; best = DURATION_4ML[i]; }
+    }
+    return best;
+  }
+
+  function recordingTo4ML(rec) {
+    const events = rec.events.slice().sort((a, b) => a.t - b.t);
+    const notes = [];
+    for (let i = 0; i < events.length; i++) {
+      if (!events[i].on) continue;
+      let endT = events[i].t + 500;
+      for (let j = i + 1; j < events.length; j++) {
+        if (events[j].noteIdx === events[i].noteIdx && !events[j].on) {
+          endT = events[j].t;
+          break;
+        }
+      }
+      notes.push({ start: events[i].t, end: endT, noteIdx: events[i].noteIdx });
+    }
+    notes.sort((a, b) => a.start - b.start);
+
+    const channelTracks = [];
+    const channelEndTime = [];
+    notes.forEach(seg => {
+      let ch = 0;
+      while (ch < channelEndTime.length && channelEndTime[ch] > seg.start) ch++;
+      if (ch === channelEndTime.length) {
+        channelTracks.push([]);
+        channelEndTime.push(0);
+      }
+      channelTracks[ch].push(seg);
+      channelEndTime[ch] = seg.end;
+    });
+
+    function segmentsTo4MLTokens(segments) {
+      segments.sort((a, b) => a.start - b.start);
+      const tokens = [];
+      let currentTime = 0;
+      let currentOctave = 3;
+      segments.forEach(n => {
+        if (n.start > currentTime) {
+          const restMs = n.start - currentTime;
+          tokens.push('r' + msTo4MLDuration(restMs));
+          currentTime = n.start;
+        }
+        const info = noteIdxTo4ML(n.noteIdx);
+        if (!info) return;
+        if (info.octave !== currentOctave) {
+          tokens.push('o' + info.octave);
+          currentOctave = info.octave;
+        }
+        const durMs = n.end - n.start;
+        tokens.push(info.letter + Math.max(1, msTo4MLDuration(durMs)));
+        currentTime = n.end;
+      });
+      return tokens.join(' ');
+    }
+
+    const out = ['; Exported from Piano Keys'];
+    channelTracks.forEach((segments, i) => {
+      if (segments.length === 0) return;
+      const chNum = i + 1;
+      out.push('C' + chNum + ' t60 v8 o3 ' + segmentsTo4MLTokens(segments));
+    });
+    return out.join('\n');
+  }
+
+  function parse4MLToEvents(text) {
+    const events = [];
+    const tokens = text.replace(/;[\s\S]*?$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').split(/\s+/).filter(Boolean);
+    let tempo = 60;
+    let currentOctave = 3;
+    let timeMs = 0;
+    const beatMs = () => 60000 / tempo;
+    const noteLetterToSemitone = { c:0, 'c+':1, d:2, 'd+':3, e:4, f:5, 'f+':6, g:7, 'g+':8, a:9, 'a+':10, b:11 };
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i];
+      if (/^C\d+$/i.test(t) || /^v\d+$/i.test(t)) continue;
+      const tempoMatch = t.match(/^t(\d+)$/i);
+      if (tempoMatch) { tempo = Math.min(255, parseInt(tempoMatch[1], 10)); continue; }
+      const octaveMatch = t.match(/^o(\d+)$/i);
+      if (octaveMatch) { currentOctave = Math.max(0, Math.min(8, parseInt(octaveMatch[1], 10))); continue; }
+      const restMatch = t.match(/^r(\d+)(\.)?$/i);
+      if (restMatch) {
+        let div = parseInt(restMatch[1], 10);
+        if ([1,2,4,8,16,32,64,128].indexOf(div) === -1) continue;
+        const dotted = restMatch[2];
+        let ms = (beatMs() * 4 / div);
+        if (dotted) ms *= 1.5;
+        timeMs += ms;
+        continue;
+      }
+      const noteMatch = t.match(/^([cdefgab][+#]?)(\d+)(\.)?$/i);
+      if (noteMatch) {
+        const letter = noteMatch[1].toLowerCase().replace('#', '+');
+        const div = parseInt(noteMatch[2], 10);
+        if ([1,2,4,8,16,32,64,128].indexOf(div) === -1) continue;
+        const semitone = noteLetterToSemitone[letter];
+        if (semitone === undefined) continue;
+        const noteIdx = (currentOctave - 3) * 12 + semitone + 1;
+        if (noteIdx < 1 || noteIdx > 37) continue;
+        const dotted = noteMatch[3];
+        let ms = (beatMs() * 4 / div);
+        if (dotted) ms *= 1.5;
+        events.push({ t: Math.round(timeMs), noteIdx, on: true });
+        events.push({ t: Math.round(timeMs + ms), noteIdx, on: false });
+        timeMs += ms;
+        continue;
+      }
+    }
+    return events;
+  }
+
+  const EXACT_FORMAT_VERSION = 1;
+
+  function recordingToExactFormat(rec) {
+    return JSON.stringify({ version: EXACT_FORMAT_VERSION, events: rec.events }, null, 0);
+  }
+
+  function parseExactFormatToEvents(text) {
+    try {
+      const data = JSON.parse(text);
+      if (!data || !Array.isArray(data.events)) return null;
+      const events = [];
+      for (const e of data.events) {
+        if (typeof e.t !== 'number' || typeof e.noteIdx !== 'number' || typeof e.on !== 'boolean') return null;
+        if (e.noteIdx < 1 || e.noteIdx > 37) return null;
+        events.push({ t: e.t, noteIdx: e.noteIdx, on: e.on });
+      }
+      return events;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function download4ML(rec) {
+    const content = recordingTo4ML(rec);
+    const blob = new Blob([content], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'recording-' + rec.id + '.4ml';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function downloadExact(rec) {
+    const content = recordingToExactFormat(rec);
+    const blob = new Blob([content], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'recording-' + rec.id + '.piano.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function uploadRecording(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const text = reader.result;
+        let events = parseExactFormatToEvents(text);
+        if (events === null) events = parse4MLToEvents(text);
+        if (!events || events.length === 0) return;
+        const rec = { id: Date.now(), createdAt: new Date(), events };
+        recordingsList.push(rec);
+        renderRecordingsList();
+        updatePlayAllBtn();
+      } catch (e) { console.warn('Upload parse failed', e); }
+    };
+    reader.readAsText(file);
+  }
+
+  function recordNoteEvent(noteIdx, on) {
+    if (!isRecording) return;
+    recordedEvents.push({ t: Date.now() - recordStartTime, noteIdx, on });
+  }
+
+  function startRecording() {
+    if (isRecording) { stopRecording(); return; }
+    stopPlayback();
+    recordedEvents = [];
+    recordStartTime = Date.now();
+    isRecording = true;
+    recordBtn.classList.add('active');
+    recordBtn.textContent = 'Stop';
+    recordingIndicator.classList.add('visible');
+    function updateTimer() {
+      if (!isRecording) return;
+      const s = (Date.now() - recordStartTime) / 1000;
+      const m = Math.floor(s / 60);
+      const secs = s % 60;
+      recordingTimerEl.textContent = m + ':' + (secs < 10 ? '0' : '') + secs.toFixed(1);
+      recordTimerId = setTimeout(updateTimer, 100);
+    }
+    updateTimer();
+  }
+
+  function stopRecording() {
+    if (!isRecording) return;
+    isRecording = false;
+    if (recordTimerId) clearTimeout(recordTimerId);
+    recordTimerId = null;
+    recordBtn.classList.remove('active');
+    recordBtn.textContent = 'Record';
+    recordingIndicator.classList.remove('visible');
+    if (recordedEvents.length > 0) {
+      const rec = { id: Date.now(), createdAt: new Date(), events: recordedEvents.slice() };
+      recordingsList.push(rec);
+      renderRecordingsList();
+      updatePlayAllBtn();
+    }
+  }
+
+  function stopPlayback() {
+    if (!isPlaying) return;
+    isPlaying = false;
+    playingRecordingId = null;
+    if (playbackFrameId) cancelAnimationFrame(playbackFrameId);
+    playbackFrameId = null;
+    stopAll();
+    document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
+    updateNoteDisplay();
+    renderRecordingsList();
+    updatePlayAllBtn();
+  }
+
+  function startPlayAll() {
+    if (recordingsList.length === 0) return;
+    stopPlayback();
+    stopPlayAll();
+    const start = Date.now();
+    recordingsList.forEach(rec => {
+      const events = rec.events.slice().sort((a, b) => a.t - b.t);
+      playAllState[rec.id] = { start, events, idx: 0, durationMs: getRecordingDurationMs(events), done: false };
+    });
+    isPlayingAll = true;
+    renderRecordingsList();
+    updatePlayAllBtn();
+
+    function tick() {
+      if (!isPlayingAll) return;
+      const elapsed = Date.now() - start;
+      let allDone = true;
+      Object.entries(playAllState).forEach(([id, state]) => {
+        if (state.done) return;
+        while (state.idx < state.events.length && state.events[state.idx].t <= elapsed) {
+          const ev = state.events[state.idx];
+          if (ev.on) { playNote(ev.noteIdx); setKeyDepressed(ev.noteIdx, true); }
+          else { stopNote(ev.noteIdx); setKeyDepressed(ev.noteIdx, false); }
+          state.idx++;
+        }
+        const progressEl = document.getElementById('progress-' + id);
+        const timeEl = document.getElementById('playtime-' + id);
+        if (progressEl) {
+          const pct = Math.min(100, (elapsed / state.durationMs) * 100);
+          progressEl.style.width = pct + '%';
+        }
+        if (timeEl) timeEl.textContent = formatTime(Math.min(elapsed, state.durationMs)) + ' / ' + formatTime(state.durationMs);
+        if (state.idx >= state.events.length && elapsed >= state.durationMs) state.done = true;
+        else allDone = false;
+      });
+      updateNoteDisplay();
+      if (allDone) stopPlayAll();
+      else playAllFrameId = requestAnimationFrame(tick);
+    }
+    playAllFrameId = requestAnimationFrame(tick);
+  }
+
+  function stopPlayAll() {
+    if (!isPlayingAll) return;
+    isPlayingAll = false;
+    if (playAllFrameId) cancelAnimationFrame(playAllFrameId);
+    playAllFrameId = null;
+    Object.keys(playAllState).forEach(id => delete playAllState[id]);
+    stopAll();
+    document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
+    updateNoteDisplay();
+    renderRecordingsList();
+    updatePlayAllBtn();
+  }
+
+  function startPlayback(recording) {
+    if (!recording || !recording.events.length) return;
+    stopPlayback();
+    stopAll();
+    document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
+    const start = Date.now();
+    const durationMs = getRecordingDurationMs(recording.events);
+    let idx = 0;
+    const events = recording.events.slice().sort((a, b) => a.t - b.t);
+    playingRecordingId = recording.id;
+    renderRecordingsList();
+
+    function tick() {
+      if (!isPlaying) return;
+      const elapsed = Date.now() - start;
+      while (idx < events.length && events[idx].t <= elapsed) {
+        const ev = events[idx];
+        if (ev.on) { playNote(ev.noteIdx); setKeyDepressed(ev.noteIdx, true); }
+        else { stopNote(ev.noteIdx); setKeyDepressed(ev.noteIdx, false); }
+        idx++;
+      }
+      const progressEl = document.getElementById('progress-' + recording.id);
+      const timeEl = document.getElementById('playtime-' + recording.id);
+      if (progressEl) {
+        const pct = Math.min(100, (elapsed / durationMs) * 100);
+        progressEl.style.width = pct + '%';
+      }
+      if (timeEl) timeEl.textContent = formatTime(Math.min(elapsed, durationMs)) + ' / ' + formatTime(durationMs);
+      updateNoteDisplay();
+      if (idx >= events.length && elapsed >= durationMs) stopPlayback();
+      else playbackFrameId = requestAnimationFrame(tick);
+    }
+    isPlaying = true;
+    playbackFrameId = requestAnimationFrame(tick);
+  }
+
+  function deleteRecording(id) {
+    const i = recordingsList.findIndex(r => r.id === id);
+    if (i === -1) return;
+    if (playingRecordingId === id) stopPlayback();
+    if (isPlayingAll) { stopPlayAll(); }
+    recordingsList.splice(i, 1);
+    renderRecordingsList();
+    updatePlayAllBtn();
+  }
+
+  function renderRecordingsList() {
+    recordingsListEl.innerHTML = '';
+    recordingsList.forEach(rec => {
+      const durationMs = getRecordingDurationMs(rec.events);
+      const isPlayingThis = playingRecordingId === rec.id || (isPlayingAll && playAllState[rec.id] && !playAllState[rec.id].done);
+      const row = document.createElement('div');
+      row.className = 'recording-item' + (isPlayingThis ? ' playing' : '');
+      row.dataset.recId = String(rec.id);
+      const ts = document.createElement('span');
+      ts.className = 'timestamp';
+      ts.textContent = formatTimestamp(rec.createdAt);
+      row.appendChild(ts);
+      const durSpan = document.createElement('span');
+      durSpan.className = 'duration';
+      durSpan.textContent = ' (' + formatTime(durationMs) + ')';
+      row.appendChild(durSpan);
+      const progressWrap = document.createElement('div');
+      progressWrap.className = 'progress-wrap';
+      progressWrap.style.display = isPlayingThis ? 'block' : 'none';
+      const progressBar = document.createElement('div');
+      progressBar.className = 'progress-bar';
+      progressBar.id = 'progress-' + rec.id;
+      progressBar.style.width = '0%';
+      progressWrap.appendChild(progressBar);
+      row.appendChild(progressWrap);
+      const playTime = document.createElement('span');
+      playTime.className = 'play-time';
+      playTime.id = 'playtime-' + rec.id;
+      if (isPlayingThis) playTime.textContent = '0:00.0 / ' + formatTime(durationMs);
+      else playTime.textContent = '';
+      playTime.style.display = isPlayingThis ? 'inline' : 'none';
+      row.appendChild(playTime);
+      const playBtn = document.createElement('button');
+      playBtn.textContent = isPlayingThis ? 'Stop' : 'Play';
+      playBtn.type = 'button';
+      playBtn.onclick = (e) => {
+        e.stopPropagation();
+        if (isPlayingThis) {
+          if (isPlayingAll) stopPlayAll();
+          else stopPlayback();
+        } else {
+          if (isPlayingAll) stopPlayAll();
+          startPlayback(rec);
+        }
+      };
+      row.appendChild(playBtn);
+      const dl4mlBtn = document.createElement('button');
+      dl4mlBtn.className = 'btn-4ml';
+      dl4mlBtn.textContent = '4ML';
+      dl4mlBtn.type = 'button';
+      dl4mlBtn.title = 'Download as 4ML';
+      dl4mlBtn.onclick = (e) => { e.stopPropagation(); download4ML(rec); };
+      row.appendChild(dl4mlBtn);
+      const dlExactBtn = document.createElement('button');
+      dlExactBtn.type = 'button';
+      dlExactBtn.title = 'Download exact format (plays identically on re-upload)';
+      dlExactBtn.innerHTML = '<svg class="btn-download-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+      dlExactBtn.onclick = (e) => { e.stopPropagation(); downloadExact(rec); };
+      row.appendChild(dlExactBtn);
+      const delBtn = document.createElement('button');
+      delBtn.textContent = 'Delete';
+      delBtn.type = 'button';
+      delBtn.className = 'delete';
+      delBtn.onclick = (e) => { e.stopPropagation(); deleteRecording(rec.id); };
+      row.appendChild(delBtn);
+      const details = document.createElement('div');
+      details.className = 'recording-details';
+      details.id = 'details-' + rec.id;
+      details.innerHTML = '<strong>Duration:</strong> ' + formatTime(durationMs) + '<br><strong>Notes:</strong><pre class="notes-text">' + getNotesText(rec.events) + '</pre>';
+      row.appendChild(details);
+      row.addEventListener('click', (e) => {
+        if (e.target.tagName === 'BUTTON') return;
+        details.classList.toggle('visible');
+      });
+      recordingsListEl.appendChild(row);
+    });
+  }
+
+  let isMouseDown = false;
+  let currentMouseNoteIdx = null;
+  const touchIdToNote = {};
+
+  function startPointerNote(noteIdx) {
+    playNote(noteIdx);
+    setKeyDepressed(noteIdx, true);
+    recordNoteEvent(noteIdx, true);
+    updateNoteDisplay();
+  }
+
+  function endPointerNote(noteIdx) {
+    stopNote(noteIdx);
+    setKeyDepressed(noteIdx, false);
+    recordNoteEvent(noteIdx, false);
+    updateNoteDisplay();
+  }
+
+  function getNoteIdxUnderPoint(clientX, clientY) {
+    const el = document.elementFromPoint(clientX, clientY);
+    const keyEl = el && el.closest('.piano-key');
+    if (!keyEl || keyEl.dataset.noteIdx === '') return null;
+    const n = parseInt(keyEl.dataset.noteIdx, 10);
+    return isNaN(n) ? null : n;
+  }
+
+  function bindPointerToKey(el) {
+    const noteIdx = parseInt(el.dataset.noteIdx, 10);
+    if (isNaN(noteIdx)) return;
+
+    el.addEventListener('mousedown', e => {
+      e.preventDefault();
+      if (audioContext && audioContext.state === 'suspended') audioContext.resume();
+      isMouseDown = true;
+      if (currentMouseNoteIdx !== noteIdx) {
+        if (currentMouseNoteIdx !== null) endPointerNote(currentMouseNoteIdx);
+        startPointerNote(noteIdx);
+        currentMouseNoteIdx = noteIdx;
+      }
+    });
+
+    el.addEventListener('touchstart', e => {
+      if (audioContext && audioContext.state === 'suspended') audioContext.resume();
+      for (const t of e.changedTouches) {
+        startPointerNote(noteIdx);
+        touchIdToNote[t.identifier] = noteIdx;
+      }
+      e.preventDefault();
+    }, { passive: false });
+  }
+
+  document.addEventListener('mousemove', e => {
+    if (!isMouseDown) return;
+    const noteIdxUnder = getNoteIdxUnderPoint(e.clientX, e.clientY);
+    if (noteIdxUnder === currentMouseNoteIdx) return;
+    if (currentMouseNoteIdx !== null) endPointerNote(currentMouseNoteIdx);
+    currentMouseNoteIdx = noteIdxUnder;
+    if (currentMouseNoteIdx !== null) startPointerNote(currentMouseNoteIdx);
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (currentMouseNoteIdx !== null) {
+      endPointerNote(currentMouseNoteIdx);
+      currentMouseNoteIdx = null;
+    }
+    isMouseDown = false;
+  });
+
+  document.addEventListener('touchmove', e => {
+    let handled = false;
+    for (const t of e.changedTouches) {
+      const currentNoteIdx = touchIdToNote[t.identifier];
+      if (currentNoteIdx === undefined) continue;
+      handled = true;
+      const noteIdxUnder = getNoteIdxUnderPoint(t.clientX, t.clientY);
+      if (noteIdxUnder === currentNoteIdx) continue;
+      if (currentNoteIdx !== null) endPointerNote(currentNoteIdx);
+      if (noteIdxUnder !== null) {
+        startPointerNote(noteIdxUnder);
+        touchIdToNote[t.identifier] = noteIdxUnder;
+      } else {
+        touchIdToNote[t.identifier] = null;
+      }
+    }
+    if (handled) e.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('touchend', e => {
+    for (const t of e.changedTouches) {
+      const noteIdx = touchIdToNote[t.identifier];
+      if (noteIdx !== undefined && noteIdx !== null) endPointerNote(noteIdx);
+      delete touchIdToNote[t.identifier];
+    }
+  });
+
+  document.addEventListener('touchcancel', e => {
+    for (const t of e.changedTouches) {
+      const noteIdx = touchIdToNote[t.identifier];
+      if (noteIdx !== undefined && noteIdx !== null) endPointerNote(noteIdx);
+      delete touchIdToNote[t.identifier];
+    }
+  });
+
+  renderKeys();
+  document.querySelectorAll('.piano-key').forEach(bindPointerToKey);
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (isRecording) stopRecording();
+      stopPlayback();
+      stopPlayAll();
+      stopAll();
+      document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
+      noteDisplayEl.textContent = '';
+      e.preventDefault();
+      return;
+    }
+    if (e.key === '~' || e.key === '`') {
+      startRecording();
+      e.preventDefault();
+      return;
+    }
+    if (e.key === ' ') {
+      e.preventDefault();
+      if (recordingsList.length > 0) startPlayback(recordingsList[recordingsList.length - 1]);
+      return;
+    }
+    const noteIdx = KEY_TO_NOTE[e.key];
+    if (noteIdx !== undefined) {
+      e.preventDefault();
+      playNote(noteIdx);
+      setKeyDepressed(noteIdx, true);
+      recordNoteEvent(noteIdx, true);
+      updateNoteDisplay();
+    }
+  });
+
+  document.addEventListener('keyup', e => {
+    const noteIdx = KEY_TO_NOTE[e.key];
+    if (noteIdx !== undefined) {
+      e.preventDefault();
+      stopNote(noteIdx);
+      setKeyDepressed(noteIdx, false);
+      recordNoteEvent(noteIdx, false);
+      updateNoteDisplay();
+    }
+  });
+
+  recordBtn.addEventListener('click', () => { startRecording(); });
+
+  const playAllBtn = document.getElementById('playAllBtn');
+  playAllBtn.addEventListener('click', () => {
+    if (isPlayingAll) stopPlayAll();
+    else startPlayAll();
+  });
+
+  function updatePlayAllBtn() {
+    playAllBtn.disabled = recordingsList.length === 0;
+    playAllBtn.textContent = isPlayingAll ? 'Stop All' : 'Play All';
+  }
+
+  document.getElementById('uploadRecording').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) { uploadRecording(file); e.target.value = ''; }
+  });
+
+  document.body.addEventListener('click', () => {
+    if (audioContext && audioContext.state === 'suspended') audioContext.resume();
+  });
+})();
+  </script>
+</body>
+</html>
