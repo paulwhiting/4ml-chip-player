@@ -151,10 +151,6 @@
     .transport button.playAll { color: #8ef; }
     .transport button.playAll:disabled { opacity: 0.5; cursor: not-allowed; }
     .recordings-toolbar button.playAll { color: #8ef; }
-    .speed-control { display: flex; align-items: center; gap: 0.5rem; }
-    .speed-control label { font-size: 0.85rem; }
-    .speed-control input[type="range"] { width: 100px; cursor: pointer; }
-    .speed-control #speedValue { font-size: 0.85rem; min-width: 3em; }
     .recording-indicator {
       display: none;
       align-items: center;
@@ -273,11 +269,6 @@
       <span>Recording</span>
       <span class="recording-timer" id="recordingTimer">0:00.0</span>
     </div>
-    <div class="speed-control">
-      <label for="speedSlider">Speed:</label>
-      <input type="range" id="speedSlider" min="25" max="200" value="100" step="5">
-      <span id="speedValue">100%</span>
-    </div>
   </div>
   <div class="recordings-section">
     <h2>Recordings</h2>
@@ -285,10 +276,6 @@
       <label class="upload-label" title="Upload recording (.piano.json)">
         <input type="file" id="uploadRecording" accept=".json,.piano.json,.4ml,.txt,application/json,text/plain" style="display:none">
         <span class="upload-btn">Upload</span>
-      </label>
-      <label class="upload-label" title="Upload 4ML music file">
-        <input type="file" id="upload4ML" accept=".4ml,.txt,application/json,text/plain" style="display:none">
-        <span class="upload-btn">Upload 4ML</span>
       </label>
       <button type="button" class="playAll" id="playAllBtn" disabled>Play All</button>
     </div>
@@ -309,23 +296,23 @@
 
   const KEY_TO_NOTE = {};
   const LOWER_ROW_WHITE = "zxcvbnm,./";
-  const LOWER_ROW_WHITE_NOTES = [27,29,31,32,34,36,38,39,41,43];
+  const LOWER_ROW_WHITE_NOTES = [1,3,5,6,8,10,12,13,15,17];
   LOWER_ROW_WHITE.split('').forEach((k, i) => { KEY_TO_NOTE[k] = LOWER_ROW_WHITE_NOTES[i]; });
 
-  const TOP_ROW_WHITE = "qwertyuiop]";
-  const TOP_ROW_WHITE_NOTES = [44,46,48,50,51,53,55,56,58,60,63];
+  const TOP_ROW_WHITE = "qwertyuiop[]\\";
+  const TOP_ROW_WHITE_NOTES = [18,20,22,24,25,27,29,30,32,34,35,37];
   TOP_ROW_WHITE.split('').forEach((k, i) => { KEY_TO_NOTE[k] = TOP_ROW_WHITE_NOTES[i]; });
 
   const HOME_ROW_BLACK = "sdfghjkl;";
-  const HOME_ROW_BLACK_NOTES = [28,30,null,33,35,37,null,40,42];
+  const HOME_ROW_BLACK_NOTES = [2,4,null,7,9,11,null,14,16];
   HOME_ROW_BLACK.split('').forEach((k, i) => { if (HOME_ROW_BLACK_NOTES[i] != null) KEY_TO_NOTE[k] = HOME_ROW_BLACK_NOTES[i]; });
 
   const NUMBER_ROW_BLACK = "234567890";
-  const NUMBER_ROW_BLACK_NOTES = [45,47,49,null,52,54,null,57,59];
+  const NUMBER_ROW_BLACK_NOTES = [19,21,23,null,26,28,null,31,33];
   NUMBER_ROW_BLACK.split('').forEach((k, i) => { if (NUMBER_ROW_BLACK_NOTES[i] != null) KEY_TO_NOTE[k] = NUMBER_ROW_BLACK_NOTES[i]; });
 
-  KEY_TO_NOTE["-"] = 61;
-  KEY_TO_NOTE["["] = 62;
+  KEY_TO_NOTE["-"] = 36;
+  KEY_TO_NOTE["["] = 35;
 
   function noteNameToFreq(name) {
     const sharp = name.includes('#') ? 1 : 0;
@@ -336,17 +323,14 @@
     return 440 * Math.pow(2, (midi - 69) / 12);
   }
 
-  function noteIdxToFreq(noteIdx) {
-    const midi = 21 + noteIdx;
-    return 440 * Math.pow(2, (midi - 69) / 12);
+  function noteIdxToName(noteIdx) {
+    if (noteIdx < 0 || noteIdx >= NOTE_NAMES.length) return null;
+    return NOTE_NAMES[noteIdx];
   }
 
-  function noteIdxToName(noteIdx) {
-    if (noteIdx < 0 || noteIdx > 88) return null;
-    const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-    const octave = Math.floor((noteIdx + 9) / 12);
-    const semitone = (noteIdx + 21) % 12;
-    return noteNames[semitone] + octave;
+  function noteIdxToFreq(noteIdx) {
+    const midi = noteIdx + 47;
+    return 440 * Math.pow(2, (midi - 69) / 12);
   }
 
   let audioContext = null;
@@ -357,29 +341,60 @@
     return audioContext;
   }
 
-  function playNote(noteIdx) {
-    if (noteIdx < 0 || noteIdx > 88) return;
-    if (activeOscillators[noteIdx]) return;
+  let percussionBuffer = null;
+  function getPercussionBuffer(ctx) {
+    if (!percussionBuffer) {
+      const bufferSize = ctx.sampleRate * 0.1;
+      percussionBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = percussionBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.05));
+      }
+    }
+    return percussionBuffer;
+  }
+
+  function playNote(noteIdx, percussion) {
+    const isPerc = percussion === true;
+    const key = isPerc ? 'perc_' + noteIdx : noteIdx;
+    if (activeOscillators[key]) return;
     const ctx = getAudioContext();
     if (ctx.state === 'suspended') ctx.resume();
 
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0, ctx.currentTime);
-    gain.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.02);
     gain.connect(ctx.destination);
 
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(noteIdxToFreq(noteIdx), ctx.currentTime);
-    osc.connect(gain);
-    osc.start(ctx.currentTime);
-
-    activeOscillators[noteIdx] = { oscillator: osc, gain };
+    if (isPerc) {
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.1);
+      const source = ctx.createBufferSource();
+      source.buffer = getPercussionBuffer(ctx);
+      source.connect(gain);
+      source.start(ctx.currentTime);
+      source.stop(ctx.currentTime + 0.1);
+      activeOscillators[key] = { oscillator: source, gain };
+    } else {
+      gain.gain.setValueAtTime(0, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(noteIdxToFreq(noteIdx), ctx.currentTime);
+      osc.connect(gain);
+      osc.start(ctx.currentTime);
+      activeOscillators[key] = { oscillator: osc, gain };
+    }
   }
 
-  function stopNote(noteIdx) {
-    const obj = activeOscillators[noteIdx];
+  function stopNote(noteIdx, percussion) {
+    const isPerc = percussion === true;
+    const key = isPerc ? 'perc_' + noteIdx : noteIdx;
+    const obj = activeOscillators[key];
     if (!obj) return;
+    if (isPerc) {
+      try { obj.oscillator.stop(); } catch(e) {}
+      delete activeOscillators[key];
+      return;
+    }
     const ctx = getAudioContext();
     const t = ctx.currentTime;
     obj.gain.gain.cancelScheduledValues(t);
@@ -387,11 +402,18 @@
     obj.gain.gain.setTargetAtTime(0.0001, t, 0.05);
     obj.gain.gain.setValueAtTime(0.0001, t + 0.3);
     obj.oscillator.stop(t + 0.35);
-    delete activeOscillators[noteIdx];
+    delete activeOscillators[key];
   }
 
   function stopAll() {
-    Object.keys(activeOscillators).forEach(n => stopNote(parseInt(n, 10)));
+    Object.keys(activeOscillators).forEach(n => {
+      if (n.startsWith('perc_')) {
+        stopNote(parseInt(n.slice(5)), true);
+      } else {
+        stopNote(parseInt(n, 10), false);
+      }
+    });
+    percussionBuffer = null;
   }
 
   const NOTE_TO_KEY = {};
@@ -401,15 +423,15 @@
   const pianoEl = document.getElementById('piano');
   const noteDisplayEl = document.getElementById('noteDisplay');
 
-  const WHITE_NOTE_ORDER = [27,29,31,32,34,36,38,39,41,43,44,46,48,50,51,53,55,56,58,60,62,63];
+  const WHITE_NOTE_ORDER = [1,3,5,6,8,10,12,13,15,17,18,20,22,24,25,27,29,30,32,34,35,37];
   const NUM_WHITE_KEYS = WHITE_NOTE_ORDER.length;
   const BLACK_NOTE_POSITIONS = [
-    { noteIdx: 28,  left: 0.65 },  { noteIdx: 30,  left: 1.65 },
-    { noteIdx: 33,  left: 3.65 },  { noteIdx: 35,  left: 4.65 },  { noteIdx: 37,  left: 5.65 },
-    { noteIdx: 40,  left: 7.65 },  { noteIdx: 42,  left: 8.65 },
-    { noteIdx: 45,  left: 10.65 }, { noteIdx: 47,  left: 11.65 }, { noteIdx: 49,  left: 12.65 },
-    { noteIdx: 52,  left: 14.65 }, { noteIdx: 54,  left: 15.65 },
-    { noteIdx: 57,  left: 17.65 }, { noteIdx: 59,  left: 18.65 }, { noteIdx: 61,  left: 19.65 }
+    { noteIdx: 2,  left: 0.65 },  { noteIdx: 4,  left: 1.65 },
+    { noteIdx: 7,  left: 3.65 },  { noteIdx: 9,  left: 4.65 },  { noteIdx: 11, left: 5.65 },
+    { noteIdx: 14, left: 7.65 },  { noteIdx: 16, left: 8.65 },
+    { noteIdx: 19, left: 10.65 }, { noteIdx: 21, left: 11.65 }, { noteIdx: 23, left: 12.65 },
+    { noteIdx: 26, left: 14.65 }, { noteIdx: 28, left: 15.65 },
+    { noteIdx: 31, left: 17.65 }, { noteIdx: 33, left: 18.65 }, { noteIdx: 36, left: 19.65 }
   ].map(o => ({ ...o, width: 0.55 }));
 
   function renderKeys() {
@@ -444,7 +466,12 @@
   }
 
   function updateNoteDisplay() {
-    const active = Object.keys(activeOscillators).map(n => noteIdxToName(parseInt(n, 10))).filter(Boolean);
+    const active = Object.keys(activeOscillators).map(n => {
+      if (n.startsWith('perc_')) {
+        return noteIdxToName(parseInt(n.slice(5))) + ' (perc)';
+      }
+      return noteIdxToName(parseInt(n, 10));
+    }).filter(Boolean);
     noteDisplayEl.innerHTML = '';
     if (active.length) {
       noteDisplayEl.append('Playing: ');
@@ -471,7 +498,6 @@
   let isPlayingAll = false;
   let playAllFrameId = null;
   const playAllState = {};
-  let playbackSpeed = 1.0;
   const recordingsList = [];
   const recordBtn = document.getElementById('recordBtn');
   const recordingIndicator = document.getElementById('recordingIndicator');
@@ -501,7 +527,11 @@
     const sorted = events.slice().sort((a, b) => a.t - b.t);
     const lines = [];
     sorted.forEach(ev => {
-      if (ev.on) lines.push(formatTime(ev.t) + '  ' + (noteIdxToName(ev.noteIdx) || '?'));
+      if (ev.on) {
+        const name = noteIdxToName(ev.noteIdx) || '?';
+        const perc = ev.percussion ? ' (perc)' : '';
+        lines.push(formatTime(ev.t) + '  ' + name + perc);
+      }
     });
     return lines.length ? lines.join('\n') : '(no notes)';
   }
@@ -511,7 +541,7 @@
   const DURATION_4ML = [1, 2, 4, 8, 16, 32, 64, 128];
 
   function noteIdxTo4ML(noteIdx) {
-    if (noteIdx < 0 || noteIdx > 88) return null;
+    if (noteIdx < 1 || noteIdx > 37) return null;
     const octave = Math.floor((noteIdx - 1) / 12) + 3;
     const letter = NOTE_4ML[(noteIdx - 1) % 12];
     return { octave, letter };
@@ -593,6 +623,7 @@
     const events = [];
     const lines = text.split('\n');
     const channels = [];
+    const percussionChannels = new Set();
     let currentChannel = -1;
     
     for (const line of lines) {
@@ -610,8 +641,10 @@
     
     const noteLetterToSemitone = { c:0, 'c+':1, d:2, 'd+':3, e:4, f:5, 'f+':6, g:7, 'g+':8, a:9, 'a+':10, b:11 };
     
-    for (const channelContent of channels) {
+    for (let chIdx = 0; chIdx < channels.length; chIdx++) {
+      const channelContent = channels[chIdx];
       if (!channelContent) continue;
+      const isPercussion = /@?i\s*2/i.test(channelContent);
       let tempo = 60;
       let currentOctave = 3;
       let timeMs = 0;
@@ -635,7 +668,7 @@
           if (num) currentOctave = Math.max(0, Math.min(8, parseInt(num, 10)));
           continue;
         }
-        if (ch === 'v' || ch === 'V') {
+        if (ch === 'v' || ch === 'V' || ch === 'i' || ch === 'I' || ch === '@') {
           i++;
           while (i < content.length && /\d/.test(content[i])) i++;
           continue;
@@ -668,14 +701,12 @@
           if ([1,2,4,8,16,32,64,128].indexOf(div) !== -1) {
             const semitone = noteLetterToSemitone[letter];
             if (semitone !== undefined) {
-              const noteIdx = currentOctave * 12 + semitone - 9;
-              if (noteIdx >= 0 && noteIdx <= 88) {
-                let ms = beatMs() * 4 / div;
-                if (noteMatch[4]) ms *= 1.5;
-                events.push({ t: Math.round(timeMs), noteIdx, on: true });
-                events.push({ t: Math.round(timeMs + ms), noteIdx, on: false });
-                timeMs += ms;
-              }
+              const noteIdx = (currentOctave + 1) * 12 + semitone - 47;
+              let ms = beatMs() * 4 / div;
+              if (noteMatch[4]) ms *= 1.5;
+              events.push({ t: Math.round(timeMs), noteIdx, on: true, percussion: isPercussion });
+              events.push({ t: Math.round(timeMs + ms), noteIdx, on: false, percussion: isPercussion });
+              timeMs += ms;
             }
           }
           i += noteMatch[0].length;
@@ -701,8 +732,8 @@
       const events = [];
       for (const e of data.events) {
         if (typeof e.t !== 'number' || typeof e.noteIdx !== 'number' || typeof e.on !== 'boolean') return null;
-        if (e.noteIdx < 1 || e.noteIdx > 37) return null;
-        events.push({ t: e.t, noteIdx: e.noteIdx, on: e.on });
+        if (e.noteIdx < 0 || e.noteIdx > 36) return null;
+        events.push({ t: e.t, noteIdx: e.noteIdx, on: e.on, percussion: e.percussion === true });
       }
       return events;
     } catch (err) {
@@ -817,24 +848,23 @@
     function tick() {
       if (!isPlayingAll) return;
       const elapsed = Date.now() - start;
-      const scaledElapsed = elapsed * playbackSpeed;
       let allDone = true;
       Object.entries(playAllState).forEach(([id, state]) => {
         if (state.done) return;
-        while (state.idx < state.events.length && state.events[state.idx].t <= scaledElapsed) {
+        while (state.idx < state.events.length && state.events[state.idx].t <= elapsed) {
           const ev = state.events[state.idx];
-          if (ev.on) { playNote(ev.noteIdx); setKeyDepressed(ev.noteIdx, true); }
-          else { stopNote(ev.noteIdx); setKeyDepressed(ev.noteIdx, false); }
+          if (ev.on) { playNote(ev.noteIdx, ev.percussion); if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, true); }
+          else { stopNote(ev.noteIdx, ev.percussion); if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, false); }
           state.idx++;
         }
         const progressEl = document.getElementById('progress-' + id);
         const timeEl = document.getElementById('playtime-' + id);
         if (progressEl) {
-          const pct = Math.min(100, (scaledElapsed / (state.durationMs * playbackSpeed)) * 100);
+          const pct = Math.min(100, (elapsed / state.durationMs) * 100);
           progressEl.style.width = pct + '%';
         }
-        if (timeEl) timeEl.textContent = formatTime(Math.min(scaledElapsed, state.durationMs * playbackSpeed)) + ' / ' + formatTime(state.durationMs * playbackSpeed);
-        if (state.idx >= state.events.length && scaledElapsed >= state.durationMs * playbackSpeed) state.done = true;
+        if (timeEl) timeEl.textContent = formatTime(Math.min(elapsed, state.durationMs)) + ' / ' + formatTime(state.durationMs);
+        if (state.idx >= state.events.length && elapsed >= state.durationMs) state.done = true;
         else allDone = false;
       });
       updateNoteDisplay();
@@ -872,22 +902,21 @@
     function tick() {
       if (!isPlaying) return;
       const elapsed = Date.now() - start;
-      const scaledElapsed = elapsed * playbackSpeed;
-      while (idx < events.length && events[idx].t <= scaledElapsed) {
+      while (idx < events.length && events[idx].t <= elapsed) {
         const ev = events[idx];
-        if (ev.on) { playNote(ev.noteIdx); setKeyDepressed(ev.noteIdx, true); }
-        else { stopNote(ev.noteIdx); setKeyDepressed(ev.noteIdx, false); }
+        if (ev.on) { playNote(ev.noteIdx, ev.percussion); if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, true); }
+        else { stopNote(ev.noteIdx, ev.percussion); if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, false); }
         idx++;
       }
       const progressEl = document.getElementById('progress-' + recording.id);
       const timeEl = document.getElementById('playtime-' + recording.id);
       if (progressEl) {
-        const pct = Math.min(100, (scaledElapsed / (durationMs * playbackSpeed)) * 100);
+        const pct = Math.min(100, (elapsed / durationMs) * 100);
         progressEl.style.width = pct + '%';
       }
-      if (timeEl) timeEl.textContent = formatTime(Math.min(scaledElapsed, durationMs * playbackSpeed)) + ' / ' + formatTime(durationMs * playbackSpeed);
+      if (timeEl) timeEl.textContent = formatTime(Math.min(elapsed, durationMs)) + ' / ' + formatTime(durationMs);
       updateNoteDisplay();
-      if (idx >= events.length && scaledElapsed >= durationMs * playbackSpeed) stopPlayback();
+      if (idx >= events.length && elapsed >= durationMs) stopPlayback();
       else playbackFrameId = requestAnimationFrame(tick);
     }
     isPlaying = true;
@@ -1146,33 +1175,6 @@
   document.getElementById('uploadRecording').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) { uploadRecording(file); e.target.value = ''; }
-  });
-
-  document.getElementById('upload4ML').addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const text = reader.result;
-        const events = parse4MLToEvents(text);
-        if (!events || events.length === 0) {
-          console.warn('4ML parse: no events found', text.slice(0, 200));
-          return;
-        }
-        const rec = { id: Date.now(), createdAt: new Date(), events };
-        recordingsList.push(rec);
-        renderRecordingsList();
-        updatePlayAllBtn();
-      } catch (err) { console.warn('4ML parse failed', err); }
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  });
-
-  document.getElementById('speedSlider').addEventListener('input', (e) => {
-    playbackSpeed = parseInt(e.target.value, 10) / 100;
-    document.getElementById('speedValue').textContent = e.target.value + '%';
   });
 
   document.body.addEventListener('click', () => {
