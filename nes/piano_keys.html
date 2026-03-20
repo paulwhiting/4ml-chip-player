@@ -324,8 +324,12 @@
   }
 
   function noteIdxToName(noteIdx) {
-    if (noteIdx < 0 || noteIdx >= NOTE_NAMES.length) return null;
-    return NOTE_NAMES[noteIdx];
+    if (noteIdx < 0) return null;
+    const midi = noteIdx + 47;
+    const noteNames2 = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const octave = Math.floor(midi / 12) - 1;
+    const noteName = noteNames2[midi % 12];
+    return noteName + octave;
   }
 
   function noteIdxToFreq(noteIdx) {
