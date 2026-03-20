@@ -269,6 +269,10 @@
       <span>Recording</span>
       <span class="recording-timer" id="recordingTimer">0:00.0</span>
     </div>
+    <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.85rem;">
+      Speed <span id="speedLabel">1.0x</span>
+      <input type="range" id="speedSlider" min="25" max="200" value="100" style="width:80px">
+    </label>
   </div>
   <div class="recordings-section">
     <h2>Recordings</h2>
@@ -506,6 +510,7 @@
   const recordingIndicator = document.getElementById('recordingIndicator');
   const recordingTimerEl = document.getElementById('recordingTimer');
   const recordingsListEl = document.getElementById('recordingsList');
+  let playbackSpeed = 1.0;
 
   function formatTime(ms) {
     const s = ms / 1000;
@@ -850,7 +855,7 @@
 
     function tick() {
       if (!isPlayingAll) return;
-      const elapsed = Date.now() - start;
+      const elapsed = (Date.now() - start) * playbackSpeed;
       let allDone = true;
       Object.entries(playAllState).forEach(([id, state]) => {
         if (state.done) return;
@@ -904,7 +909,7 @@
 
     function tick() {
       if (!isPlaying) return;
-      const elapsed = Date.now() - start;
+      const elapsed = (Date.now() - start) * playbackSpeed;
       while (idx < events.length && events[idx].t <= elapsed) {
         const ev = events[idx];
         if (ev.on) { playNote(ev.noteIdx, ev.percussion); if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, true); }
@@ -1175,6 +1180,11 @@
     playAllBtn.disabled = recordingsList.length === 0;
     playAllBtn.textContent = isPlayingAll ? 'Stop All' : 'Play All';
   }
+
+  document.getElementById('speedSlider').addEventListener('input', (e) => {
+    playbackSpeed = parseInt(e.target.value, 10) / 100;
+    document.getElementById('speedLabel').textContent = playbackSpeed.toFixed(1) + 'x';
+  });
 
   document.getElementById('uploadRecording').addEventListener('change', (e) => {
     const file = e.target.files[0];
