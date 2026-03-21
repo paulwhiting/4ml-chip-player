@@ -150,6 +150,8 @@
     .transport button.play:disabled { opacity: 0.5; cursor: not-allowed; }
     .transport button.playAll { color: #8ef; }
     .transport button.playAll:disabled { opacity: 0.5; cursor: not-allowed; }
+    .transport button.pause { color: #fe8; }
+    .transport button.pause:disabled { opacity: 0.5; cursor: not-allowed; }
     .recordings-toolbar button.playAll { color: #8ef; }
     .recording-indicator {
       display: none;
@@ -258,12 +260,13 @@
 <body>
   <h1>Piano Keys</h1>
   <p class="instructions">
-    White: lower row (z–/) and top row (q–\). Black: home row (s–;) and number row (2–0). ` or ~ record, Escape stop. Click a recording to see details; use its Play button to play. Use "Play All" to play all recordings simultaneously.
+    White: lower row (z–/) and top row (q–\). Black: home row (s–;) and number row (2–0). ` or ~ record, Space pause, Escape stop. Click a recording to see details; use its Play button to play. Use "Play All" to play all recordings simultaneously.
   </p>
   <div class="piano-wrap" id="piano"></div>
   <div class="note-display" id="noteDisplay"></div>
   <div class="transport">
     <button type="button" class="record" id="recordBtn">Record</button>
+    <button type="button" id="pauseBtn" disabled>Pause</button>
     <div class="recording-indicator" id="recordingIndicator">
       <span class="dot"></span>
       <span>Recording</span>
@@ -504,9 +507,14 @@
   let playingRecordingId = null;
   let isPlayingAll = false;
   let playAllFrameId = null;
+  let isPaused = false;
+  let pauseStartTime = 0;
+  let playStartTime = 0;
+  let playAllPauseTime = 0;
   const playAllState = {};
   const recordingsList = [];
   const recordBtn = document.getElementById('recordBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
   const recordingIndicator = document.getElementById('recordingIndicator');
   const recordingTimerEl = document.getElementById('recordingTimer');
   const recordingsListEl = document.getElementById('recordingsList');
@@ -830,6 +838,7 @@
   function stopPlayback() {
     if (!isPlaying) return;
     isPlaying = false;
+    isPaused = false;
     playingRecordingId = null;
     if (playbackFrameId) cancelAnimationFrame(playbackFrameId);
     playbackFrameId = null;
@@ -838,6 +847,7 @@
     updateNoteDisplay();
     renderRecordingsList();
     updatePlayAllBtn();
+    updatePauseBtn();
   }
 
   function startPlayAll() {
@@ -845,17 +855,24 @@
     stopPlayback();
     stopPlayAll();
     const start = Date.now();
+    playStartTime = start;
     recordingsList.forEach(rec => {
       const events = rec.events.slice().sort((a, b) => a.t - b.t);
-      playAllState[rec.id] = { start, events, idx: 0, durationMs: getRecordingDurationMs(events), done: false };
+      playAllState[rec.id] = { start, events, idx: 0, durationMs: getRecordingDurationMs(events), done: false, pausedAt: 0 };
     });
     isPlayingAll = true;
+    isPaused = false;
     renderRecordingsList();
     updatePlayAllBtn();
+    updatePauseBtn();
 
     function tick() {
       if (!isPlayingAll) return;
-      const elapsed = (Date.now() - start) * playbackSpeed;
+      if (isPaused) {
+        playAllFrameId = requestAnimationFrame(tick);
+        return;
+      }
+      const elapsed = (Date.now() - playStartTime) * playbackSpeed;
       let allDone = true;
       Object.entries(playAllState).forEach(([id, state]) => {
         if (state.done) return;
@@ -885,6 +902,7 @@
   function stopPlayAll() {
     if (!isPlayingAll) return;
     isPlayingAll = false;
+    isPaused = false;
     if (playAllFrameId) cancelAnimationFrame(playAllFrameId);
     playAllFrameId = null;
     Object.keys(playAllState).forEach(id => delete playAllState[id]);
@@ -893,23 +911,58 @@
     updateNoteDisplay();
     renderRecordingsList();
     updatePlayAllBtn();
+    updatePauseBtn();
+  }
+
+  function togglePause() {
+    if (!isPlaying && !isPlayingAll) return;
+    if (isPaused) {
+      isPaused = false;
+      const pauseDuration = Date.now() - pauseStartTime;
+      playStartTime += pauseDuration;
+      if (isPlayingAll) {
+        Object.values(playAllState).forEach(state => {
+          state.start += pauseDuration;
+        });
+      }
+    } else {
+      isPaused = true;
+      pauseStartTime = Date.now();
+      stopAll();
+      document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
+    }
+    updatePauseBtn();
+  }
+
+  function updatePauseBtn() {
+    pauseBtn.disabled = !isPlaying && !isPlayingAll;
+    pauseBtn.textContent = isPaused ? 'Resume' : 'Pause';
   }
 
   function startPlayback(recording) {
     if (!recording || !recording.events.length) return;
     stopPlayback();
+    stopPlayAll();
     stopAll();
     document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
     const start = Date.now();
+    playStartTime = start;
     const durationMs = getRecordingDurationMs(recording.events);
     let idx = 0;
     const events = recording.events.slice().sort((a, b) => a.t - b.t);
     playingRecordingId = recording.id;
+    isPlaying = true;
+    isPaused = false;
     renderRecordingsList();
+    updatePauseBtn();
 
     function tick() {
       if (!isPlaying) return;
-      const elapsed = (Date.now() - start) * playbackSpeed;
+      if (isPaused) {
+        playbackFrameId = requestAnimationFrame(tick);
+        return;
+      }
+      const elapsed = (Date.now() - playStartTime) * playbackSpeed;
       while (idx < events.length && events[idx].t <= elapsed) {
         const ev = events[idx];
         if (ev.on) { playNote(ev.noteIdx, ev.percussion); if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, true); }
@@ -927,7 +980,6 @@
       if (idx >= events.length && elapsed >= durationMs) stopPlayback();
       else playbackFrameId = requestAnimationFrame(tick);
     }
-    isPlaying = true;
     playbackFrameId = requestAnimationFrame(tick);
   }
 
@@ -1144,7 +1196,11 @@
     }
     if (e.key === ' ') {
       e.preventDefault();
-      if (recordingsList.length > 0) startPlayback(recordingsList[recordingsList.length - 1]);
+      if (isPlaying || isPlayingAll) {
+        togglePause();
+      } else if (recordingsList.length > 0) {
+        startPlayback(recordingsList[recordingsList.length - 1]);
+      }
       return;
     }
     const noteIdx = KEY_TO_NOTE[e.key];
@@ -1169,6 +1225,7 @@
   });
 
   recordBtn.addEventListener('click', () => { startRecording(); });
+  pauseBtn.addEventListener('click', () => { togglePause(); });
 
   const playAllBtn = document.getElementById('playAllBtn');
   playAllBtn.addEventListener('click', () => {
