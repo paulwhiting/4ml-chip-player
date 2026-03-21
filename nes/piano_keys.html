@@ -551,7 +551,8 @@
       if (ev.on) {
         const name = noteIdxToName(ev.noteIdx) || '?';
         const perc = ev.percussion ? ' (perc)' : '';
-        lines.push(formatTime(ev.t) + '  ' + name + perc);
+        const channel = ev.channel ? ' ' + ev.channel + ' -' : '';
+        lines.push(formatTime(ev.t) + ':' + channel + ' ' + name + perc);
       }
     });
     return lines.length ? lines.join('\n') : '(no notes)';
@@ -650,7 +651,7 @@
     for (const line of lines) {
       const stripped = line.trim();
       if (!stripped) continue;
-      const channelMatch = stripped.match(/^C(\d+)\s*(.*)$/i);
+      const channelMatch = stripped.match(/^C(\d+)\s*(.*)$/);
       if (channelMatch) {
         currentChannel = parseInt(channelMatch[1], 10);
         if (!channels[currentChannel]) channels[currentChannel] = '';
@@ -666,6 +667,7 @@
       const channelContent = channels[chIdx];
       if (!channelContent) continue;
       const isPercussion = /@?i\s*2/i.test(channelContent);
+      const channelName = 'CH' + chIdx;
       let tempo = 60;
       let currentOctave = 3;
       let currentDuration = 8;
@@ -725,8 +727,8 @@
               const noteIdx = (currentOctave + 1) * 12 + semitone - 47;
               let ms = beatMs() * 4 / div;
               if (noteMatch[4]) ms *= 1.5;
-              events.push({ t: Math.round(timeMs), noteIdx, on: true, percussion: isPercussion });
-              events.push({ t: Math.round(timeMs + ms), noteIdx, on: false, percussion: isPercussion });
+              events.push({ t: Math.round(timeMs), noteIdx, on: true, percussion: isPercussion, channel: channelName });
+              events.push({ t: Math.round(timeMs + ms), noteIdx, on: false, percussion: isPercussion, channel: channelName });
               timeMs += ms;
               if (noteMatch[3]) currentDuration = div;
             }
