@@ -519,6 +519,11 @@
   const recordingTimerEl = document.getElementById('recordingTimer');
   const recordingsListEl = document.getElementById('recordingsList');
   let playbackSpeed = 1.0;
+  let scheduledTimeouts = [];
+  let playbackProgressTimer = null;
+  let currentPlaybackEvents = null;
+  let currentPlaybackDurationMs = 0;
+  let currentPlaybackRecordingId = null;
 
   function formatTime(ms) {
     const s = ms / 1000;
@@ -842,6 +847,11 @@
     playingRecordingId = null;
     if (playbackFrameId) cancelAnimationFrame(playbackFrameId);
     playbackFrameId = null;
+    if (playbackProgressTimer) clearInterval(playbackProgressTimer);
+    playbackProgressTimer = null;
+    scheduledTimeouts.forEach(id => clearTimeout(id));
+    scheduledTimeouts = [];
+    currentPlaybackEvents = null;
     stopAll();
     document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
     updateNoteDisplay();
@@ -856,6 +866,7 @@
     stopPlayAll();
     const start = Date.now();
     playStartTime = start;
+    scheduledTimeouts = [];
     recordingsList.forEach(rec => {
       const events = rec.events.slice().sort((a, b) => a.t - b.t);
       playAllState[rec.id] = { start, events, idx: 0, durationMs: getRecordingDurationMs(events), done: false, pausedAt: 0 };
@@ -865,23 +876,48 @@
     renderRecordingsList();
     updatePlayAllBtn();
     updatePauseBtn();
+    startPlayAllProgressUpdate();
 
-    function tick() {
-      if (!isPlayingAll) return;
-      if (isPaused) {
-        playAllFrameId = requestAnimationFrame(tick);
-        return;
+    recordingsList.forEach(rec => {
+      rec.events.forEach((ev) => {
+        const delay = ev.t / playbackSpeed;
+        const timeoutId = setTimeout(() => {
+          if (!isPlayingAll || isPaused) return;
+          if (ev.on) {
+            playNote(ev.noteIdx, ev.percussion);
+            if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, true);
+          } else {
+            stopNote(ev.noteIdx, ev.percussion);
+            if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, false);
+          }
+          updateNoteDisplay();
+        }, delay);
+        scheduledTimeouts.push(timeoutId);
+      });
+    });
+
+    setTimeout(() => {
+      if (isPlayingAll && !isPaused) {
+        stopPlayAll();
       }
+    }, getMaxPlayAllDuration() / playbackSpeed + 500);
+  }
+
+  function getMaxPlayAllDuration() {
+    let maxDuration = 0;
+    recordingsList.forEach(rec => {
+      const duration = getRecordingDurationMs(rec.events);
+      if (duration > maxDuration) maxDuration = duration;
+    });
+    return maxDuration;
+  }
+
+  function startPlayAllProgressUpdate() {
+    if (playbackProgressTimer) clearInterval(playbackProgressTimer);
+    playbackProgressTimer = setInterval(() => {
+      if (!isPlayingAll || isPaused) return;
       const elapsed = (Date.now() - playStartTime) * playbackSpeed;
-      let allDone = true;
       Object.entries(playAllState).forEach(([id, state]) => {
-        if (state.done) return;
-        while (state.idx < state.events.length && state.events[state.idx].t <= elapsed) {
-          const ev = state.events[state.idx];
-          if (ev.on) { playNote(ev.noteIdx, ev.percussion); if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, true); }
-          else { stopNote(ev.noteIdx, ev.percussion); if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, false); }
-          state.idx++;
-        }
         const progressEl = document.getElementById('progress-' + id);
         const timeEl = document.getElementById('playtime-' + id);
         if (progressEl) {
@@ -889,14 +925,8 @@
           progressEl.style.width = pct + '%';
         }
         if (timeEl) timeEl.textContent = formatTime(Math.min(elapsed, state.durationMs)) + ' / ' + formatTime(state.durationMs);
-        if (state.idx >= state.events.length && elapsed >= state.durationMs) state.done = true;
-        else allDone = false;
       });
-      updateNoteDisplay();
-      if (allDone) stopPlayAll();
-      else playAllFrameId = requestAnimationFrame(tick);
-    }
-    playAllFrameId = requestAnimationFrame(tick);
+    }, 100);
   }
 
   function stopPlayAll() {
@@ -905,6 +935,10 @@
     isPaused = false;
     if (playAllFrameId) cancelAnimationFrame(playAllFrameId);
     playAllFrameId = null;
+    if (playbackProgressTimer) clearInterval(playbackProgressTimer);
+    playbackProgressTimer = null;
+    scheduledTimeouts.forEach(id => clearTimeout(id));
+    scheduledTimeouts = [];
     Object.keys(playAllState).forEach(id => delete playAllState[id]);
     stopAll();
     document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
@@ -925,13 +959,52 @@
           state.start += pauseDuration;
         });
       }
+      if (isPlaying) {
+        reschedulePlayback(pauseDuration);
+        startProgressUpdate();
+      }
     } else {
       isPaused = true;
       pauseStartTime = Date.now();
+      scheduledTimeouts.forEach(id => clearTimeout(id));
+      scheduledTimeouts = [];
+      if (playbackProgressTimer) clearInterval(playbackProgressTimer);
       stopAll();
       document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
     }
     updatePauseBtn();
+  }
+
+  function reschedulePlayback(pauseDuration) {
+    if (!currentPlaybackEvents) return;
+    const events = currentPlaybackEvents;
+    const start = playStartTime;
+    const durationMs = currentPlaybackDurationMs;
+    const recordingId = currentPlaybackRecordingId;
+    const elapsed = (Date.now() - start) * playbackSpeed;
+    const currentIdx = events.findIndex((ev, i) => i > 0 && events.slice(0, i).filter(e => !e.on).length === events.slice(0, i).filter(e => e.on).length ? false : ev.t > elapsed);
+    
+    events.forEach((ev, i) => {
+      const delay = ev.t / playbackSpeed;
+      if (delay > elapsed) {
+        const adjustedDelay = delay - elapsed;
+        const timeoutId = setTimeout(() => {
+          if (!isPlaying || isPaused) return;
+          if (ev.on) {
+            playNote(ev.noteIdx, ev.percussion);
+            if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, true);
+          } else {
+            stopNote(ev.noteIdx, ev.percussion);
+            if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, false);
+          }
+          updateNoteDisplay();
+          if (!ev.on && i === events.length - 1) {
+            stopPlayback();
+          }
+        }, adjustedDelay);
+        scheduledTimeouts.push(timeoutId);
+      }
+    });
   }
 
   function updatePauseBtn() {
@@ -948,39 +1021,51 @@
     const start = Date.now();
     playStartTime = start;
     const durationMs = getRecordingDurationMs(recording.events);
-    let idx = 0;
     const events = recording.events.slice().sort((a, b) => a.t - b.t);
     playingRecordingId = recording.id;
     isPlaying = true;
     isPaused = false;
+    scheduledTimeouts = [];
+    currentPlaybackEvents = events;
+    currentPlaybackDurationMs = durationMs;
+    currentPlaybackRecordingId = recording.id;
     renderRecordingsList();
     updatePauseBtn();
+    startProgressUpdate();
 
-    function tick() {
-      if (!isPlaying) return;
-      if (isPaused) {
-        playbackFrameId = requestAnimationFrame(tick);
-        return;
-      }
+    events.forEach((ev, i) => {
+      const delay = ev.t / playbackSpeed;
+      const timeoutId = setTimeout(() => {
+        if (!isPlaying || isPaused) return;
+        if (ev.on) {
+          playNote(ev.noteIdx, ev.percussion);
+          if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, true);
+        } else {
+          stopNote(ev.noteIdx, ev.percussion);
+          if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, false);
+        }
+        updateNoteDisplay();
+        if (!ev.on && i === events.length - 1) {
+          stopPlayback();
+        }
+      }, delay);
+      scheduledTimeouts.push(timeoutId);
+    });
+  }
+
+  function startProgressUpdate() {
+    if (playbackProgressTimer) clearInterval(playbackProgressTimer);
+    playbackProgressTimer = setInterval(() => {
+      if (!isPlaying || isPaused) return;
       const elapsed = (Date.now() - playStartTime) * playbackSpeed;
-      while (idx < events.length && events[idx].t <= elapsed) {
-        const ev = events[idx];
-        if (ev.on) { playNote(ev.noteIdx, ev.percussion); if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, true); }
-        else { stopNote(ev.noteIdx, ev.percussion); if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, false); }
-        idx++;
-      }
-      const progressEl = document.getElementById('progress-' + recording.id);
-      const timeEl = document.getElementById('playtime-' + recording.id);
+      const progressEl = document.getElementById('progress-' + currentPlaybackRecordingId);
+      const timeEl = document.getElementById('playtime-' + currentPlaybackRecordingId);
       if (progressEl) {
-        const pct = Math.min(100, (elapsed / durationMs) * 100);
+        const pct = Math.min(100, (elapsed / currentPlaybackDurationMs) * 100);
         progressEl.style.width = pct + '%';
       }
-      if (timeEl) timeEl.textContent = formatTime(Math.min(elapsed, durationMs)) + ' / ' + formatTime(durationMs);
-      updateNoteDisplay();
-      if (idx >= events.length && elapsed >= durationMs) stopPlayback();
-      else playbackFrameId = requestAnimationFrame(tick);
-    }
-    playbackFrameId = requestAnimationFrame(tick);
+      if (timeEl) timeEl.textContent = formatTime(Math.min(elapsed, currentPlaybackDurationMs)) + ' / ' + formatTime(currentPlaybackDurationMs);
+    }, 100);
   }
 
   function deleteRecording(id) {
