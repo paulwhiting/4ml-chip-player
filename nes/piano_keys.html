@@ -668,6 +668,7 @@
       const isPercussion = /@?i\s*2/i.test(channelContent);
       let tempo = 60;
       let currentOctave = 3;
+      let currentDuration = 8;
       let timeMs = 0;
       const beatMs = () => 60000 / tempo;
       let i = 0;
@@ -700,13 +701,12 @@
           while (i < content.length && /\d/.test(content[i])) { num += content[i]; i++; }
           const dotted = content[i] === '.';
           if (dotted) i++;
-          if (num) {
-            const div = parseInt(num, 10);
-            if ([1,2,4,8,16,32,64,128].indexOf(div) !== -1) {
-              let ms = beatMs() * 4 / div;
-              if (dotted) ms *= 1.5;
-              timeMs += ms;
-            }
+          const div = num ? parseInt(num, 10) : currentDuration;
+          if ([1,2,4,8,16,32,64,128].indexOf(div) !== -1) {
+            let ms = beatMs() * 4 / div;
+            if (dotted) ms *= 1.5;
+            timeMs += ms;
+            if (num) currentDuration = div;
           }
           continue;
         }
@@ -714,11 +714,11 @@
           i++;
           continue;
         }
-        const noteMatch = content.slice(i).match(/^([cdefgab])([\+#])?(\d+)(\.)?/i);
+        const noteMatch = content.slice(i).match(/^([cdefgab])([\+#])?(\d*)(\.)?/i);
         if (noteMatch) {
           let letter = noteMatch[1].toLowerCase();
           if (noteMatch[2]) letter += '+';
-          const div = parseInt(noteMatch[3], 10);
+          const div = noteMatch[3] ? parseInt(noteMatch[3], 10) : currentDuration;
           if ([1,2,4,8,16,32,64,128].indexOf(div) !== -1) {
             const semitone = noteLetterToSemitone[letter];
             if (semitone !== undefined) {
@@ -728,6 +728,7 @@
               events.push({ t: Math.round(timeMs), noteIdx, on: true, percussion: isPercussion });
               events.push({ t: Math.round(timeMs + ms), noteIdx, on: false, percussion: isPercussion });
               timeMs += ms;
+              if (noteMatch[3]) currentDuration = div;
             }
           }
           i += noteMatch[0].length;
