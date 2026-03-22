@@ -523,9 +523,9 @@
   let isPlayingAll = false;
   let playAllFrameId = null;
   let isPaused = false;
-  let pauseStartTime = 0;
   let playStartTime = 0;
-  let playAllPauseTime = 0;
+  let currentSongTime = 0;
+  let lastProgressUpdateTime = 0;
   const playAllState = {};
   const recordingsList = [];
   const recordBtn = document.getElementById('recordBtn');
@@ -564,13 +564,20 @@
     const sorted = events.slice().sort((a, b) => a.t - b.t);
     const lines = [];
     let noteIndex = 0;
+    let lastShown = null;
     sorted.forEach((ev, idx) => {
       if (ev.on) {
-        const name = noteIdxToName(ev.noteIdx) || '?';
-        const perc = ev.percussion ? ' (perc)' : '';
-        const channel = ev.channel ? ' ' + ev.channel + ' -' : '';
-        lines.push({ id: noteIndex, t: ev.t, text: formatTime(ev.t) + ':' + channel + ' ' + name + perc });
-        noteIndex++;
+        const noteKey = ev.channel + '-' + ev.noteIdx;
+        if (lastShown !== noteKey) {
+          lastShown = noteKey;
+          const name = noteIdxToName(ev.noteIdx) || '?';
+          const perc = ev.percussion ? ' (perc)' : '';
+          const channel = ev.channel ? ' ' + ev.channel + ' -' : '';
+          lines.push({ id: noteIndex, t: ev.t, text: formatTime(ev.t) + ':' + channel + ' ' + name + perc });
+          noteIndex++;
+        }
+      } else {
+        lastShown = null;
       }
     });
     return lines;
@@ -589,7 +596,7 @@
     if (highlight) {
       noteEl.classList.add('highlight');
       lastHighlightedNote = noteEl;
-      noteEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      noteEl.scrollIntoView({ behavior: 'auto', block: 'center' });
     } else {
       noteEl.classList.remove('highlight');
       if (lastHighlightedNote === noteEl) lastHighlightedNote = null;
@@ -966,15 +973,17 @@
     if (playbackProgressTimer) clearInterval(playbackProgressTimer);
     playbackProgressTimer = setInterval(() => {
       if (!isPlayingAll || isPaused) return;
-      const elapsed = (Date.now() - playStartTime) * playbackSpeed;
       Object.entries(playAllState).forEach(([id, state]) => {
+        const songTime = (Date.now() - state.start) * playbackSpeed;
+        const maxT = state.events ? Math.max(...state.events.map(e => e.t)) : 0;
+        const totalMs = maxT + 300;
         const progressEl = document.getElementById('progress-' + id);
         const timeEl = document.getElementById('playtime-' + id);
         if (progressEl) {
-          const pct = Math.min(100, (elapsed / state.durationMs) * 100);
+          const pct = Math.min(100, (songTime / totalMs) * 100);
           progressEl.style.width = pct + '%';
         }
-        if (timeEl) timeEl.textContent = formatTime(Math.min(elapsed, state.durationMs)) + ' / ' + formatTime(state.durationMs);
+        if (timeEl) timeEl.textContent = formatTime(Math.min(songTime, totalMs)) + ' / ' + formatTime(totalMs);
       });
     }, 100);
   }
@@ -1003,20 +1012,20 @@
     if (!isPlaying && !isPlayingAll) return;
     if (isPaused) {
       isPaused = false;
-      const pauseDuration = Date.now() - pauseStartTime;
-      playStartTime += pauseDuration;
+      lastProgressUpdateTime = Date.now();
       if (isPlayingAll) {
         Object.values(playAllState).forEach(state => {
-          state.start += pauseDuration;
+          state.start = Date.now();
         });
+        reschedulePlayAllPlayback(currentSongTime);
+        startPlayAllProgressUpdate();
       }
       if (isPlaying) {
-        reschedulePlayback(pauseDuration);
+        reschedulePlayback(currentSongTime);
         startProgressUpdate();
       }
     } else {
       isPaused = true;
-      pauseStartTime = Date.now();
       scheduledTimeouts.forEach(id => clearTimeout(id));
       scheduledTimeouts = [];
       if (playbackProgressTimer) clearInterval(playbackProgressTimer);
@@ -1025,30 +1034,93 @@
     }
     updatePlayBtn();
   }
+  
+  function reschedulePlayAllPlayback(fromSongTime) {
+    scheduledTimeouts.forEach(id => clearTimeout(id));
+    scheduledTimeouts = [];
+    
+    const notesToRestart = [];
+    Object.keys(playAllState).forEach(id => {
+      const state = playAllState[id];
+      state.events.forEach((ev) => {
+        if (ev.t <= fromSongTime && ev.on) {
+          notesToRestart.push({ ev });
+        }
+        if (ev.t <= fromSongTime && !ev.on) {
+          notesToRestart.pop();
+        }
+      });
+    });
+    
+    notesToRestart.forEach(({ ev }) => {
+      playNote(ev.noteIdx, ev.percussion);
+      if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, true);
+    });
+    
+    Object.keys(playAllState).forEach(id => {
+      const state = playAllState[id];
+      state.events.forEach((ev) => {
+        if (ev.t <= fromSongTime) return;
+        const delay = (ev.t - fromSongTime) / playbackSpeed;
+        const timeoutId = setTimeout(() => {
+          if (!isPlayingAll || isPaused) return;
+          if (ev.on) {
+            playNote(ev.noteIdx, ev.percussion);
+            if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, true);
+          } else {
+            stopNote(ev.noteIdx, ev.percussion);
+            if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, false);
+          }
+          updateNoteDisplay();
+        }, delay);
+        scheduledTimeouts.push(timeoutId);
+      });
+    });
+    
+    updateNoteDisplay();
+  }
 
-  function reschedulePlayback(pauseDuration) {
+  function reschedulePlayback(fromSongTime) {
     if (!currentPlaybackEvents) return;
     const events = currentPlaybackEvents;
     const recordingId = currentPlaybackRecordingId;
-    const elapsed = (Date.now() - playStartTime - pauseDuration) * playbackSpeed;
     
     const eventToNoteIndex = {};
     let noteIndex = 0;
+    let lastShown = null;
     events.forEach((ev, i) => {
       if (ev.on) {
-        eventToNoteIndex[i] = noteIndex;
-        noteIndex++;
+        const noteKey = (ev.channel || '') + '-' + ev.noteIdx;
+        if (lastShown !== noteKey) {
+          lastShown = noteKey;
+          eventToNoteIndex[i] = noteIndex;
+          noteIndex++;
+        }
       }
     });
     
-    let currentNoteIdx = -1;
+    const notesToRestart = [];
     
     events.forEach((ev, i) => {
-      if (ev.t <= elapsed) {
-        if (ev.on) currentNoteIdx = eventToNoteIndex[i];
-        return;
+      if (ev.t <= fromSongTime) {
+        if (ev.on) {
+          notesToRestart.push({ ev, i });
+        }
+        if (ev.on === false) {
+          notesToRestart.pop();
+        }
       }
-      const delay = (ev.t - elapsed) / playbackSpeed;
+    });
+    
+    notesToRestart.forEach(({ ev, i }) => {
+      playNote(ev.noteIdx, ev.percussion);
+      if (ev.noteIdx >= 1 && ev.noteIdx <= 36) setKeyDepressed(ev.noteIdx, true);
+      highlightNote(recordingId, eventToNoteIndex[i], true);
+    });
+    
+    events.forEach((ev, i) => {
+      if (ev.t <= fromSongTime) return;
+      const delay = (ev.t - fromSongTime) / playbackSpeed;
       const timeoutId = setTimeout(() => {
         if (!isPlaying || isPaused) return;
         if (ev.on) {
@@ -1069,9 +1141,7 @@
       scheduledTimeouts.push(timeoutId);
     });
     
-    if (currentNoteIdx >= 0) {
-      highlightNote(recordingId, currentNoteIdx, true);
-    }
+    updateNoteDisplay();
   }
 
   function updatePlayBtn() {
@@ -1099,6 +1169,8 @@
     clearAllHighlights();
     const start = Date.now();
     playStartTime = start;
+    lastProgressUpdateTime = start;
+    currentSongTime = 0;
     const durationMs = getRecordingDurationMs(recording.events);
     const events = recording.events.slice().sort((a, b) => a.t - b.t);
     playingRecordingId = recording.id;
@@ -1111,10 +1183,17 @@
     
     const eventToNoteIndex = {};
     let noteIndex = 0;
+    let lastShown = null;
     events.forEach((ev, i) => {
       if (ev.on) {
-        eventToNoteIndex[i] = noteIndex;
-        noteIndex++;
+        const noteKey = (ev.channel || '') + '-' + ev.noteIdx;
+        if (lastShown !== noteKey) {
+          lastShown = noteKey;
+          eventToNoteIndex[i] = noteIndex;
+          noteIndex++;
+        }
+      } else {
+        lastShown = null;
       }
     });
     
@@ -1149,14 +1228,18 @@
     if (playbackProgressTimer) clearInterval(playbackProgressTimer);
     playbackProgressTimer = setInterval(() => {
       if (!isPlaying || isPaused) return;
-      const elapsed = (Date.now() - playStartTime) * playbackSpeed;
+      const now = Date.now();
+      currentSongTime += (now - lastProgressUpdateTime) * playbackSpeed;
+      lastProgressUpdateTime = now;
+      const maxT = currentPlaybackEvents ? Math.max(...currentPlaybackEvents.map(e => e.t)) : currentPlaybackDurationMs;
+      const totalMs = maxT + 300;
       const progressEl = document.getElementById('progress-' + currentPlaybackRecordingId);
       const timeEl = document.getElementById('playtime-' + currentPlaybackRecordingId);
       if (progressEl) {
-        const pct = Math.min(100, (elapsed / currentPlaybackDurationMs) * 100);
+        const pct = Math.min(100, (currentSongTime / totalMs) * 100);
         progressEl.style.width = pct + '%';
       }
-      if (timeEl) timeEl.textContent = formatTime(Math.min(elapsed, currentPlaybackDurationMs)) + ' / ' + formatTime(currentPlaybackDurationMs);
+      if (timeEl) timeEl.textContent = formatTime(Math.min(currentSongTime, totalMs)) + ' / ' + formatTime(totalMs);
     }, 100);
   }
 
@@ -1453,43 +1536,55 @@
     document.getElementById('speedLabel').textContent = newSpeed.toFixed(1) + 'x';
     if (newSpeed === playbackSpeed) return;
     
-    const oldSpeed = playbackSpeed;
     playbackSpeed = newSpeed;
+    lastProgressUpdateTime = Date.now();
     
-    if ((isPlaying || isPlayingAll) && !isPaused) {
-      const elapsedMs = (Date.now() - playStartTime) * oldSpeed;
-      if (isPlaying && currentPlaybackEvents) {
-        rescheduleForSpeedChange(elapsedMs, currentPlaybackEvents);
-      }
-      if (isPlayingAll) {
-        reschedulePlayAllForSpeedChange(elapsedMs);
-      }
+    if (!isPlaying && !isPlayingAll) {
+      return;
+    }
+    
+    if (isPaused) {
+      return;
+    }
+    
+    if (isPlaying) {
+      rescheduleForSpeedChange();
+    }
+    if (isPlayingAll) {
+      reschedulePlayAllForSpeedChange();
     }
   });
   
-  function rescheduleForSpeedChange(elapsedMs, events) {
+  function rescheduleForSpeedChange() {
     scheduledTimeouts.forEach(id => clearTimeout(id));
     scheduledTimeouts = [];
     
     const recordingId = currentPlaybackRecordingId;
-    playStartTime = Date.now() - elapsedMs / playbackSpeed;
+    const events = currentPlaybackEvents;
     
     const eventToNoteIndex = {};
     let noteIndex = 0;
+    let lastShown = null;
     events.forEach((ev, i) => {
       if (ev.on) {
-        eventToNoteIndex[i] = noteIndex;
-        noteIndex++;
+        const noteKey = (ev.channel || '') + '-' + ev.noteIdx;
+        if (lastShown !== noteKey) {
+          lastShown = noteKey;
+          eventToNoteIndex[i] = noteIndex;
+          noteIndex++;
+        }
       }
     });
     
-    let currentNoteIdx = -1;
     events.forEach((ev, i) => {
-      if (ev.t < elapsedMs) {
-        if (ev.on) currentNoteIdx = eventToNoteIndex[i];
+      if (ev.t < currentSongTime) return;
+      
+      const delay = (ev.t - currentSongTime) / playbackSpeed;
+      
+      if (ev.t === currentSongTime && ev.on) {
         return;
       }
-      const delay = (ev.t - elapsedMs) / playbackSpeed;
+      
       const timeoutId = setTimeout(() => {
         if (!isPlaying || isPaused) return;
         if (ev.on) {
@@ -1509,25 +1604,21 @@
       }, delay);
       scheduledTimeouts.push(timeoutId);
     });
-    
-    if (currentNoteIdx >= 0) {
-      highlightNote(recordingId, currentNoteIdx, true);
-    }
   }
   
-  function reschedulePlayAllForSpeedChange(elapsedMs) {
+  function reschedulePlayAllForSpeedChange() {
     scheduledTimeouts.forEach(id => clearTimeout(id));
     scheduledTimeouts = [];
     
-    const now = Date.now();
-    playStartTime = now - elapsedMs / playbackSpeed;
-    
     Object.keys(playAllState).forEach(id => {
       const state = playAllState[id];
-      state.start = now - elapsedMs / playbackSpeed;
-      state.events.forEach((ev, i) => {
-        if (ev.t < elapsedMs) return;
-        const delay = (ev.t - elapsedMs) / playbackSpeed;
+      state.events.forEach((ev) => {
+        if (ev.t < currentSongTime) return;
+        
+        const delay = (ev.t - currentSongTime) / playbackSpeed;
+        
+        if (ev.t === currentSongTime && ev.on) return;
+        
         const timeoutId = setTimeout(() => {
           if (!isPlayingAll || isPaused) return;
           if (ev.on) {
