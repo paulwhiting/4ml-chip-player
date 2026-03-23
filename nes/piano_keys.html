@@ -311,6 +311,11 @@
     </div>
     <div style="margin-bottom:0.75rem;">
       <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;">
+        <input type="checkbox" id="sustainPedalCheck" checked> Enable Sustain Pedal (MIDI)
+      </label>
+    </div>
+    <div style="margin-bottom:0.75rem;">
+      <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;">
         <input type="checkbox" id="fullKeyboardCheck"> Show Full Keyboard
       </label>
     </div>
@@ -318,8 +323,8 @@
   <div class="recordings-section">
     <h2>Recordings</h2>
     <div class="recordings-toolbar">
-      <label class="upload-label" title="Upload recording (.piano.json)">
-        <input type="file" id="uploadRecording" accept=".json,.piano.json,.4ml,.txt,application/json,text/plain" style="display:none">
+      <label class="upload-label" title="Upload recording (.piano.json, .4ml, .mid)">
+        <input type="file" id="uploadRecording" accept=".json,.piano.json,.4ml,.txt,.mid,.midi,application/json,text/plain,audio/midi,audio/x-midi" style="display:none">
         <span class="upload-btn">Upload</span>
       </label>
       <button type="button" class="playAll" id="playAllBtn" disabled>Play All</button>
@@ -605,10 +610,16 @@
   let noteVolumeScale = 1.0;
   let percVolumeScale = 1.0;
   let ignoreVolumeCommands = false;
+  let ignoreSustainPedal = false;
   let showFullKeyboard = false;
 
   const MIN_NOTE_IDX = 1;
   const MAX_NOTE_IDX = 37;
+
+  const GM_PERCUSSION_CHANNEL = 9;
+  const PERCUSSION_NOTE_MIN = 35;
+  const PERCUSSION_NOTE_MAX = 81;
+  const SUSTAIN_PEDAL_CC = 64;
 
   function formatTime(ms) {
     const s = ms / 1000;
@@ -873,6 +884,238 @@
     return events;
   }
 
+  class MIDIReader {
+    constructor(buffer) {
+      this.buffer = new Uint8Array(buffer);
+      this.offset = 0;
+    }
+    
+    readString(length) {
+      let s = '';
+      for (let i = 0; i < length; i++) s += String.fromCharCode(this.buffer[this.offset++]);
+      return s;
+    }
+    
+    readUint32() {
+      const val = (this.buffer[this.offset] << 24) | 
+                  (this.buffer[this.offset + 1] << 16) | 
+                  (this.buffer[this.offset + 2] << 8) | 
+                  this.buffer[this.offset + 3];
+      this.offset += 4;
+      return val;
+    }
+    
+    readUint16() {
+      const val = (this.buffer[this.offset] << 8) | this.buffer[this.offset + 1];
+      this.offset += 2;
+      return val;
+    }
+    
+    readByte() {
+      return this.buffer[this.offset++];
+    }
+    
+    readVariableLength() {
+      let value = 0;
+      while (this.offset < this.buffer.length) {
+        const byte = this.readByte();
+        value = (value << 7) | (byte & 0x7F);
+        if ((byte & 0x80) === 0) break;
+      }
+      return value;
+    }
+  }
+
+  function parseMIDIToEvents(buffer) {
+    const reader = new MIDIReader(buffer);
+    
+    const header = reader.readString(4);
+    if (header !== 'MThd') return null;
+    
+    const headerLen = reader.readUint32();
+    if (headerLen !== 6) return null;
+    
+    const format = reader.readUint16();
+    const numTracks = reader.readUint16();
+    const ticksPerBeat = reader.readUint16();
+    
+    if (ticksPerBeat === 0) return null;
+    
+    const events = [];
+    let sustainUsed = false;
+    let activeNotes = {};
+    const pendingNoteOffs = [];
+    let globalTempo = 500000;
+    let currentTempo = globalTempo;
+    
+    function ticksToMs(ticks) {
+      const msPerBeat = currentTempo / 1000;
+      const msPerTick = msPerBeat / ticksPerBeat;
+      return Math.round(ticks * msPerTick);
+    }
+    
+    function processPendingNoteOffs(timeMs) {
+      for (const off of pendingNoteOffs) {
+        events.push({
+          t: timeMs,
+          noteIdx: off.noteIdx,
+          on: false,
+          percussion: off.isPercussion,
+          channel: off.channel,
+          volume: off.volume
+        });
+      }
+      pendingNoteOffs.length = 0;
+    }
+    
+    for (let track = 0; track < numTracks; track++) {
+      const trackHeader = reader.readString(4);
+      if (trackHeader !== 'MTrk') return null;
+      
+      const trackLen = reader.readUint32();
+      const trackEnd = reader.offset + trackLen;
+      let trackTime = 0;
+      let lastEventType = 0;
+      let sustainActive = false;
+      
+      while (reader.offset < trackEnd) {
+        const deltaTime = reader.readVariableLength();
+        trackTime += deltaTime;
+        const timeMs = ticksToMs(trackTime);
+        
+        let status = reader.readByte();
+        
+        if (status < 0x80) {
+          reader.offset--;
+          status = lastEventType;
+        } else {
+          lastEventType = status;
+        }
+        
+        const eventType = status >> 4;
+        const channel = status & 0x0F;
+        
+        switch (eventType) {
+          case 0x8:
+          case 0x9:
+          case 0xA:
+          case 0xB:
+          case 0xE: {
+            const note = reader.readByte();
+            const velocity = reader.readByte();
+            
+            if (eventType === 0x8 || (eventType === 0x9 && velocity === 0)) {
+              const channelName = 'CH' + (channel + 1);
+              const isPercussion = channel === GM_PERCUSSION_CHANNEL && 
+                                   note >= PERCUSSION_NOTE_MIN && note <= PERCUSSION_NOTE_MAX;
+              const noteIdx = note - 47;
+              
+              if (sustainActive && !ignoreSustainPedal) {
+                pendingNoteOffs.push({ channel: channelName, noteIdx, isPercussion, volume: 8 });
+              } else {
+                if (activeNotes[channelName] && activeNotes[channelName].note === note) {
+                  delete activeNotes[channelName];
+                }
+                for (const key in activeNotes) {
+                  if (key.startsWith(channelName + '-') && activeNotes[key].note === note) {
+                    delete activeNotes[key];
+                  }
+                }
+                events.push({
+                  t: timeMs,
+                  noteIdx,
+                  on: false,
+                  percussion: isPercussion,
+                  channel: channelName,
+                  volume: 8
+                });
+              }
+            } else if (eventType === 0x9 && velocity > 0) {
+              const isPercussion = channel === GM_PERCUSSION_CHANNEL && 
+                                   note >= PERCUSSION_NOTE_MIN && note <= PERCUSSION_NOTE_MAX;
+              const noteIdx = note - 47;
+              const volume = Math.round(velocity / 8) + 1;
+              
+              let channelName = 'CH' + (channel + 1);
+              if (activeNotes[channelName] && activeNotes[channelName].note === note) {
+                let idx = 1;
+                while (activeNotes[channelName + '-' + idx]) idx++;
+                channelName = channelName + '-' + idx;
+              }
+              
+              activeNotes[channelName] = { note, timeMs };
+              
+              events.push({
+                t: timeMs,
+                noteIdx,
+                on: true,
+                percussion: isPercussion,
+                channel: channelName,
+                volume
+              });
+            }
+            break;
+          }
+          
+          case 0xB: {
+            const cc = reader.readByte();
+            const value = reader.readByte();
+            if (cc === SUSTAIN_PEDAL_CC) {
+              const wasActive = sustainActive;
+              sustainActive = value >= 64;
+              if (sustainActive) {
+                sustainUsed = true;
+              } else if (wasActive && !ignoreSustainPedal) {
+                const timeMs = ticksToMs(trackTime);
+                processPendingNoteOffs(timeMs);
+              }
+            }
+            break;
+          }
+          
+          case 0xC:
+          case 0xD:
+            reader.readByte();
+            break;
+            
+          case 0xF:
+            if (channel === 0xF) {
+              const metaType = reader.readByte();
+              const len = reader.readVariableLength();
+              
+              if (metaType === 0x51 && len === 3) {
+                currentTempo = (reader.buffer[reader.offset] << 16) | 
+                              (reader.buffer[reader.offset + 1] << 8) | 
+                              reader.buffer[reader.offset + 2];
+                reader.offset += 3;
+              } else if (metaType === 0x2F) {
+                // End of track
+                break;
+              } else {
+                reader.offset += len;
+              }
+              continue;
+            }
+            break;
+        }
+      }
+    }
+    
+    events.sort((a, b) => a.t - b.t);
+    
+    if (sustainUsed && ignoreSustainPedal) {
+      setTimeout(() => {
+        const noteDisplay = document.getElementById('noteDisplay');
+        if (noteDisplay) {
+          noteDisplay.innerHTML = '<span style="color:#f88">Note: Sustain pedal was used in this MIDI file but is disabled in settings.</span>';
+          setTimeout(() => { noteDisplay.innerHTML = ''; }, 5000);
+        }
+      }, 100);
+    }
+    
+    return events;
+  }
+
   const EXACT_FORMAT_VERSION = 1;
 
   function recordingToExactFormat(rec) {
@@ -886,8 +1129,8 @@
       const events = [];
       for (const e of data.events) {
         if (typeof e.t !== 'number' || typeof e.noteIdx !== 'number' || typeof e.on !== 'boolean') return null;
-        if (e.noteIdx < 0 || e.noteIdx > 36) return null;
-        events.push({ t: e.t, noteIdx: e.noteIdx, on: e.on, percussion: e.percussion === true });
+        if (e.noteIdx < -5 || e.noteIdx > 61) return null;
+        events.push({ t: e.t, noteIdx: e.noteIdx, on: e.on, percussion: e.percussion === true, volume: e.volume || 8 });
       }
       return events;
     } catch (err) {
@@ -916,20 +1159,45 @@
   }
 
   function uploadRecording(file) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const text = reader.result;
-        let events = parseExactFormatToEvents(text);
-        if (events === null) events = parse4MLToEvents(text);
-        if (!events || events.length === 0) return;
-        const rec = { id: Date.now(), createdAt: new Date(), events };
-        recordingsList.push(rec);
-        renderRecordingsList();
-        updatePlayAllBtn();
-      } catch (e) { console.warn('Upload parse failed', e); }
-    };
-    reader.readAsText(file);
+    const ext = file.name.toLowerCase().split('.').pop();
+    if (ext === 'mid' || ext === 'midi') {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+const events = parseMIDIToEvents(reader.result);
+          if (!events || events.length === 0) {
+            showNotification('Failed to parse MIDI file');
+            return;
+          }
+          const rec = { id: Date.now(), createdAt: new Date(), events };
+          recordingsList.push(rec);
+          renderRecordingsList();
+          updatePlayAllBtn();
+        } catch (e) { console.warn('MIDI parse failed', e); showNotification('Failed to parse MIDI file'); }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const text = reader.result;
+          let events = parseExactFormatToEvents(text);
+          if (events === null) events = parse4MLToEvents(text);
+          if (!events || events.length === 0) return;
+          const rec = { id: Date.now(), createdAt: new Date(), events };
+          recordingsList.push(rec);
+          renderRecordingsList();
+          updatePlayAllBtn();
+        } catch (e) { console.warn('Upload parse failed', e); }
+      };
+      reader.readAsText(file);
+    }
+  }
+  
+  function showNotification(message) {
+    const noteDisplay = document.getElementById('noteDisplay');
+    noteDisplay.innerHTML = '<span style="color:#f88">' + message + '</span>';
+    setTimeout(() => { noteDisplay.innerHTML = ''; }, 5000);
   }
 
   function recordNoteEvent(noteIdx, on) {
@@ -1319,7 +1587,7 @@
       row.appendChild(ts);
       const durSpan = document.createElement('span');
       durSpan.className = 'duration';
-      durSpan.textContent = ' (' + formatTime(durationMs) + ')';
+      durSpan.textContent = formatTime(durationMs);
       row.appendChild(durSpan);
       const progressWrap = document.createElement('div');
       progressWrap.className = 'progress-wrap';
@@ -1388,7 +1656,10 @@
           notesDiv.appendChild(p);
         });
       }
-      details.innerHTML = '<strong>Duration:</strong> ' + formatTime(durationMs) + '<br><strong>Notes:</strong>';
+      details.innerHTML = '<div style="display:flex;justify-content:space-between;"><span><strong>Duration:</strong> ' + formatTime(durationMs) + '</span><span><strong>Channels:</strong> ' + (function() {
+        const channels = new Set(rec.events.map(e => e.channel));
+        return channels.size;
+      })() + '</span></div><strong>Notes:</strong>';
       details.appendChild(notesDiv);
       row.appendChild(details);
       row.addEventListener('click', (e) => {
@@ -1621,6 +1892,10 @@
   
   document.getElementById('ignoreVolCheck').addEventListener('change', (e) => {
     ignoreVolumeCommands = e.target.checked;
+  });
+  
+  document.getElementById('sustainPedalCheck').addEventListener('change', (e) => {
+    ignoreSustainPedal = !e.target.checked;
   });
   
   document.getElementById('fullKeyboardCheck').addEventListener('change', (e) => {
