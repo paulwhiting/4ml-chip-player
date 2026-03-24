@@ -192,19 +192,22 @@
     .recording-item .duration { font-size: 0.8rem; opacity: 0.85; margin-left: 0.25rem; }
     .recording-item .progress-wrap {
       flex: 1;
-      min-width: 80px;
-      height: 6px;
+      min-width: 200px;
+      height: 12px;
       background: #0d1b2a;
       border-radius: 3px;
       overflow: hidden;
       margin: 0 0.5rem;
+      cursor: pointer;
+      pointer-events: auto;
+      touch-action: none;
     }
     .recording-item .progress-bar {
       height: 100%;
       width: 0%;
       background: #6a8;
       border-radius: 3px;
-      transition: width 0.05s linear;
+      pointer-events: none;
     }
     .recording-item .play-time { font-variant-numeric: tabular-nums; font-size: 0.8rem; min-width: 4em; }
     .recording-item button {
@@ -268,6 +271,7 @@
       opacity: 0.7;
     }
   </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
   <h1>Piano Keys</h1>
@@ -324,7 +328,7 @@
     <h2>Recordings</h2>
     <div class="recordings-toolbar">
       <label class="upload-label" title="Upload recording (.piano.json, .4ml, .mid)">
-        <input type="file" id="uploadRecording" accept=".json,.piano.json,.4ml,.txt,.mid,.midi,application/json,text/plain,audio/midi,audio/x-midi" style="display:none">
+        <input type="file" id="uploadRecording" accept=".json,.piano.json,.4ml,.txt,.mid,.midi,.zip,application/json,text/plain,audio/midi,audio/x-midi,application/zip,application/x-zip-compressed" style="display:none">
         <span class="upload-btn">Upload</span>
       </label>
       <button type="button" class="playAll" id="playAllBtn" disabled>Play All</button>
@@ -712,8 +716,10 @@
   function recordingTo4ML(rec) {
     const events = rec.events.slice().sort((a, b) => a.t - b.t);
     const notes = [];
+    const percussionNotes = [];
     for (let i = 0; i < events.length; i++) {
       if (!events[i].on) continue;
+      const isPerc = events[i].percussion === true;
       let endT = events[i].t + 500;
       for (let j = i + 1; j < events.length; j++) {
         if (events[j].noteIdx === events[i].noteIdx && !events[j].on) {
@@ -721,9 +727,15 @@
           break;
         }
       }
-      notes.push({ start: events[i].t, end: endT, noteIdx: events[i].noteIdx });
+      const noteData = { start: events[i].t, end: endT, noteIdx: events[i].noteIdx };
+      if (isPerc) {
+        percussionNotes.push(noteData);
+      } else {
+        notes.push(noteData);
+      }
     }
     notes.sort((a, b) => a.start - b.start);
+    percussionNotes.sort((a, b) => a.start - b.start);
 
     const channelTracks = [];
     const channelEndTime = [];
@@ -738,7 +750,7 @@
       channelEndTime[ch] = seg.end;
     });
 
-    function segmentsTo4MLTokens(segments) {
+    function segmentsTo4MLTokens(segments, isPercussion) {
       segments.sort((a, b) => a.start - b.start);
       const tokens = [];
       let currentTime = 0;
@@ -749,24 +761,32 @@
           tokens.push('r' + msTo4MLDuration(restMs));
           currentTime = n.start;
         }
-        const info = noteIdxTo4ML(n.noteIdx);
-        if (!info) return;
-        if (info.octave !== currentOctave) {
-          tokens.push('o' + info.octave);
-          currentOctave = info.octave;
+        if (isPercussion) {
+          const durMs = n.end - n.start;
+          tokens.push(n.noteIdx + Math.max(1, msTo4MLDuration(durMs)));
+        } else {
+          const info = noteIdxTo4ML(n.noteIdx);
+          if (!info) return;
+          if (info.octave !== currentOctave) {
+            tokens.push('o' + info.octave);
+            currentOctave = info.octave;
+          }
+          const durMs = n.end - n.start;
+          tokens.push(info.letter + Math.max(1, msTo4MLDuration(durMs)));
         }
-        const durMs = n.end - n.start;
-        tokens.push(info.letter + Math.max(1, msTo4MLDuration(durMs)));
         currentTime = n.end;
       });
       return tokens.join(' ');
     }
 
     const out = ['; Exported from Piano Keys'];
+    if (percussionNotes.length > 0) {
+      out.push('C0 t60 v8 ' + segmentsTo4MLTokens(percussionNotes, true));
+    }
     channelTracks.forEach((segments, i) => {
       if (segments.length === 0) return;
       const chNum = i + 1;
-      out.push('C' + chNum + ' t60 v8 o3 ' + segmentsTo4MLTokens(segments));
+      out.push('C' + chNum + ' t60 v8 o3 ' + segmentsTo4MLTokens(segments, false));
     });
     return out.join('\n');
   }
@@ -1160,11 +1180,61 @@
 
   function uploadRecording(file) {
     const ext = file.name.toLowerCase().split('.').pop();
+    if (ext === 'zip') {
+      JSZip.loadAsync(file).then((zip) => {
+        const usedNames = new Set(recordingsList.map(r => {
+          const match = r.name ? r.name.match(/^(.+?)(-\d+)?$/) : null;
+          return match ? match[1] : null;
+        }).filter(Boolean));
+        
+        const promises = [];
+        zip.forEach((relativePath, zipEntry) => {
+          if (zipEntry.dir) return;
+          const lowerPath = relativePath.toLowerCase();
+          if (!lowerPath.endsWith('.mid') && !lowerPath.endsWith('.midi') && !lowerPath.endsWith('.4ml')) return;
+          
+          const baseName = relativePath.replace(/\.(mid|midi|4ml)$/i, '').split('/').pop();
+          let name = baseName;
+          let counter = 1;
+          while (usedNames.has(name)) {
+            name = baseName + '-' + counter;
+            counter++;
+          }
+          usedNames.add(name);
+          
+          const promise = zipEntry.async('arraybuffer').then((arrayBuffer) => {
+            let events = null;
+            const fileExt = lowerPath.split('.').pop();
+            if (fileExt === 'mid' || fileExt === 'midi') {
+              events = parseMIDIToEvents(arrayBuffer);
+            } else if (fileExt === '4ml') {
+              const text = new TextDecoder().decode(arrayBuffer);
+              events = parse4MLToEvents(text);
+            }
+            if (events && events.length > 0) {
+              const rec = { id: Date.now() + Math.random(), createdAt: new Date(), events, name };
+              recordingsList.push(rec);
+            }
+          });
+          promises.push(promise);
+        });
+        
+        Promise.all(promises).then(() => {
+          renderRecordingsList();
+          updatePlayAllBtn();
+        });
+      }).catch((e) => {
+        console.warn('ZIP parse failed', e);
+        showNotification('Failed to parse ZIP file');
+      });
+      return;
+    }
+    
     if (ext === 'mid' || ext === 'midi') {
       const reader = new FileReader();
       reader.onload = () => {
         try {
-const events = parseMIDIToEvents(reader.result);
+          const events = parseMIDIToEvents(reader.result);
           if (!events || events.length === 0) {
             showNotification('Failed to parse MIDI file');
             return;
@@ -1257,7 +1327,7 @@ const events = parseMIDIToEvents(reader.result);
     clearAllHighlights();
     document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
     updateNoteDisplay();
-    renderRecordingsList();
+    updatePlaybackStateUI(null);
     updatePlayAllBtn();
     updatePlayBtn();
     recordBtn.style.display = '';
@@ -1475,7 +1545,7 @@ const events = parseMIDIToEvents(reader.result);
     }
   }
 
-  function startPlayback(recording) {
+  function startPlayback(recording, startTime) {
     if (!recording || !recording.events.length) return;
     stopPlayback();
     stopPlayAll();
@@ -1486,7 +1556,7 @@ const events = parseMIDIToEvents(reader.result);
     const start = Date.now();
     playStartTime = start;
     lastProgressUpdateTime = start;
-    currentSongTime = 0;
+    currentSongTime = startTime !== undefined ? startTime : 0;
     const durationMs = getRecordingDurationMs(recording.events);
     const events = recording.events.slice().sort((a, b) => a.t - b.t);
     playingRecordingId = recording.id;
@@ -1513,12 +1583,32 @@ const events = parseMIDIToEvents(reader.result);
       }
     });
     
-    renderRecordingsList();
+    updatePlaybackStateUI(recording.id);
     updatePlayBtn();
     startProgressUpdate();
 
+    if (startTime !== undefined && startTime > 0) {
+      const notesToRestart = [];
+      events.forEach((ev, i) => {
+        if (ev.t <= startTime) {
+          if (ev.on) {
+            notesToRestart.push({ ev, i });
+          }
+          if (ev.on === false) {
+            notesToRestart.pop();
+          }
+        }
+      });
+      notesToRestart.forEach(({ ev, i }) => {
+        playNote(ev.noteIdx, ev.percussion, ev.volume);
+        if (noteIdxToEl[ev.noteIdx] !== undefined) setKeyDepressed(ev.noteIdx, true);
+        highlightNote(recording.id, eventToNoteIndex[i], true);
+      });
+    }
+
     events.forEach((ev, i) => {
-      const delay = ev.t / playbackSpeed;
+      if (startTime !== undefined && ev.t <= startTime) return;
+      const delay = startTime !== undefined ? (ev.t - startTime) / playbackSpeed : ev.t / playbackSpeed;
       const timeoutId = setTimeout(() => {
         if (!isPlaying || isPaused) return;
         if (ev.on) {
@@ -1544,9 +1634,13 @@ const events = parseMIDIToEvents(reader.result);
     if (playbackProgressTimer) clearInterval(playbackProgressTimer);
     playbackProgressTimer = setInterval(() => {
       if ((!isPlaying && !isPlayingAll) || isPaused) return;
-      const now = Date.now();
-      currentSongTime += (now - lastProgressUpdateTime) * playbackSpeed;
-      lastProgressUpdateTime = now;
+      if (!isDraggingProgressGlobal) {
+        const now = Date.now();
+        currentSongTime += (now - lastProgressUpdateTime) * playbackSpeed;
+        lastProgressUpdateTime = now;
+      } else {
+        lastProgressUpdateTime = Date.now();
+      }
       const maxT = currentPlaybackEvents ? Math.max(...currentPlaybackEvents.map(e => e.t)) : currentPlaybackDurationMs;
       const totalMs = maxT + 300;
       const progressEl = document.getElementById('progress-' + currentPlaybackRecordingId);
@@ -1557,6 +1651,47 @@ const events = parseMIDIToEvents(reader.result);
       }
       if (timeEl) timeEl.textContent = formatTime(Math.min(currentSongTime, totalMs)) + ' / ' + formatTime(totalMs);
     }, 100);
+  }
+  
+  let isDraggingProgressGlobal = false;
+  let currentDragState = null;
+  
+  function startDrag(state) {
+    isDraggingProgressGlobal = true;
+    currentDragState = state;
+  }
+  
+  function handleGlobalMove(clientX) {
+    if (!currentDragState) return;
+    currentDragState.onMove(clientX);
+  }
+  
+  function handleGlobalEnd() {
+    if (!currentDragState) return;
+    isDraggingProgressGlobal = false;
+    currentDragState.onEnd();
+    currentDragState = null;
+  }
+  
+  document.addEventListener('mousemove', (e) => { handleGlobalMove(e.clientX); });
+  document.addEventListener('touchmove', (e) => { if (e.touches.length > 0) handleGlobalMove(e.touches[0].clientX); }, { passive: false });
+  document.addEventListener('mouseup', () => { handleGlobalEnd(); });
+  document.addEventListener('touchend', () => { handleGlobalEnd(); });
+
+  function updatePlaybackStateUI(activeRecordingId) {
+    recordingsListEl.querySelectorAll('.recording-item').forEach(row => {
+      const recId = parseInt(row.dataset.recId, 10);
+      const isThisPlaying = activeRecordingId === recId;
+      row.classList.toggle('playing', isThisPlaying);
+      const progressWrap = row.querySelector('.progress-wrap');
+      if (progressWrap) {
+        progressWrap.style.display = isThisPlaying ? '' : 'none';
+      }
+      const rowPlayBtn = row.querySelector('button');
+      if (rowPlayBtn) {
+        rowPlayBtn.textContent = isThisPlaying ? 'Stop' : 'Play';
+      }
+    });
   }
 
   function deleteRecording(id) {
@@ -1576,15 +1711,25 @@ const events = parseMIDIToEvents(reader.result);
     });
     recordingsListEl.innerHTML = '';
     recordingsList.forEach(rec => {
-      const durationMs = getRecordingDurationMs(rec.events);
+      if (!rec.durationMs) rec.durationMs = getRecordingDurationMs(rec.events);
+      const durationMs = rec.durationMs;
       const isPlayingThis = playingRecordingId === rec.id || (isPlayingAll && playAllState[rec.id] && !playAllState[rec.id].done);
       const row = document.createElement('div');
       row.className = 'recording-item' + (isPlayingThis ? ' playing' : '');
       row.dataset.recId = String(rec.id);
       const ts = document.createElement('span');
       ts.className = 'timestamp';
-      ts.textContent = formatTimestamp(rec.createdAt);
+      ts.textContent = rec.name || formatTimestamp(rec.createdAt);
       row.appendChild(ts);
+      if (!rec.name) {
+        const tsActual = document.createElement('span');
+        tsActual.className = 'timestamp-actual';
+        tsActual.style.opacity = '0.5';
+        tsActual.style.fontSize = '0.75rem';
+        tsActual.style.marginLeft = '0.5rem';
+        tsActual.textContent = formatTimestamp(rec.createdAt);
+        row.appendChild(tsActual);
+      }
       const durSpan = document.createElement('span');
       durSpan.className = 'duration';
       durSpan.textContent = formatTime(durationMs);
@@ -1598,6 +1743,65 @@ const events = parseMIDIToEvents(reader.result);
       progressBar.style.width = '0%';
       progressWrap.appendChild(progressBar);
       row.appendChild(progressWrap);
+      let isDraggingProgress = false;
+      let hasDragged = false;
+      let wasPaused = false;
+      const DRAG_THRESHOLD = 5;
+      progressWrap.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        if (playingRecordingId !== rec.id) return;
+        const dragState = { recId: rec.id, durationMs: durationMs, wasPaused: isPaused };
+        dragState.onMove = (clientX) => {
+          const rect = progressWrap.getBoundingClientRect();
+          const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+          currentSongTime = pct * dragState.durationMs;
+          const progressEl = document.getElementById('progress-' + dragState.recId);
+          if (progressEl) progressEl.style.width = (pct * 100) + '%';
+          const timeEl = document.getElementById('playtime-' + dragState.recId);
+          if (timeEl) timeEl.textContent = formatTime(currentSongTime) + ' / ' + formatTime(dragState.durationMs);
+        };
+        dragState.onEnd = () => {
+          const recToSeek = recordingsList.find(r => r.id === playingRecordingId);
+          if (recToSeek) {
+            const seekTime = currentSongTime;
+            stopPlayback();
+            clearAllHighlights();
+            isPaused = dragState.wasPaused;
+            startPlayback(recToSeek, seekTime);
+          }
+        };
+        startDrag(dragState);
+        dragState.onMove(e.clientX);
+        e.preventDefault();
+      });
+      progressWrap.addEventListener('touchstart', (e) => {
+        e.stopPropagation();
+        if (playingRecordingId !== rec.id) return;
+        const touch = e.touches[0];
+        const dragState = { recId: rec.id, durationMs: durationMs, wasPaused: isPaused };
+        dragState.onMove = (clientX) => {
+          const rect = progressWrap.getBoundingClientRect();
+          const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+          currentSongTime = pct * dragState.durationMs;
+          const progressEl = document.getElementById('progress-' + dragState.recId);
+          if (progressEl) progressEl.style.width = (pct * 100) + '%';
+          const timeEl = document.getElementById('playtime-' + dragState.recId);
+          if (timeEl) timeEl.textContent = formatTime(currentSongTime) + ' / ' + formatTime(dragState.durationMs);
+        };
+        dragState.onEnd = () => {
+          const recToSeek = recordingsList.find(r => r.id === playingRecordingId);
+          if (recToSeek) {
+            const seekTime = currentSongTime;
+            stopPlayback();
+            clearAllHighlights();
+            isPaused = dragState.wasPaused;
+            startPlayback(recToSeek, seekTime);
+          }
+        };
+        startDrag(dragState);
+        dragState.onMove(touch.clientX);
+        e.preventDefault();
+      }, { passive: false });
       const playTime = document.createElement('span');
       playTime.className = 'play-time';
       playTime.id = 'playtime-' + rec.id;
@@ -1628,9 +1832,9 @@ const events = parseMIDIToEvents(reader.result);
       row.appendChild(dl4mlBtn);
       const dlExactBtn = document.createElement('button');
       dlExactBtn.type = 'button';
-      dlExactBtn.title = 'Download exact format (plays identically on re-upload)';
+      dlExactBtn.title = 'Download as 4ML';
       dlExactBtn.innerHTML = '<svg class="btn-download-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-      dlExactBtn.onclick = (e) => { e.stopPropagation(); downloadExact(rec); };
+      dlExactBtn.onclick = (e) => { e.stopPropagation(); download4ML(rec); };
       row.appendChild(dlExactBtn);
       const delBtn = document.createElement('button');
       delBtn.textContent = 'Delete';
