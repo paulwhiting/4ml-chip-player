@@ -1327,7 +1327,7 @@
     clearAllHighlights();
     document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
     updateNoteDisplay();
-    updatePlaybackStateUI(null);
+    renderRecordingsList();
     updatePlayAllBtn();
     updatePlayBtn();
     recordBtn.style.display = '';
@@ -1583,7 +1583,7 @@
       }
     });
     
-    updatePlaybackStateUI(recording.id);
+    renderRecordingsList();
     updatePlayBtn();
     startProgressUpdate();
 
@@ -1678,22 +1678,6 @@
   document.addEventListener('mouseup', () => { handleGlobalEnd(); });
   document.addEventListener('touchend', () => { handleGlobalEnd(); });
 
-  function updatePlaybackStateUI(activeRecordingId) {
-    recordingsListEl.querySelectorAll('.recording-item').forEach(row => {
-      const recId = parseInt(row.dataset.recId, 10);
-      const isThisPlaying = activeRecordingId === recId;
-      row.classList.toggle('playing', isThisPlaying);
-      const progressWrap = row.querySelector('.progress-wrap');
-      if (progressWrap) {
-        progressWrap.style.display = isThisPlaying ? '' : 'none';
-      }
-      const rowPlayBtn = row.querySelector('button');
-      if (rowPlayBtn) {
-        rowPlayBtn.textContent = isThisPlaying ? 'Stop' : 'Play';
-      }
-    });
-  }
-
   function deleteRecording(id) {
     const i = recordingsList.findIndex(r => r.id === id);
     if (i === -1) return;
@@ -1711,8 +1695,7 @@
     });
     recordingsListEl.innerHTML = '';
     recordingsList.forEach(rec => {
-      if (!rec.durationMs) rec.durationMs = getRecordingDurationMs(rec.events);
-      const durationMs = rec.durationMs;
+      const durationMs = getRecordingDurationMs(rec.events);
       const isPlayingThis = playingRecordingId === rec.id || (isPlayingAll && playAllState[rec.id] && !playAllState[rec.id].done);
       const row = document.createElement('div');
       row.className = 'recording-item' + (isPlayingThis ? ' playing' : '');
