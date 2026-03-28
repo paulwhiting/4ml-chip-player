@@ -1257,6 +1257,7 @@
           const rec = { id: Date.now(), createdAt: new Date(), events, durationMs };
           recordingsList.push(rec);
           rec.notesText = getNotesText(events);
+          renderRecordingsList();
         } catch (e) { console.warn('MIDI parse failed', e); showNotification('Failed to parse MIDI file'); }
       };
       reader.readAsArrayBuffer(file);
@@ -1274,6 +1275,7 @@
           const rec = { id: Date.now(), createdAt: new Date(), events, durationMs };
           recordingsList.push(rec);
           rec.notesText = getNotesText(events);
+          renderRecordingsList();
 
         } catch (e) { console.warn('Upload parse failed', e); }
       };
@@ -1445,8 +1447,10 @@
     });
     
     const remainingTime = currentPlaybackDurationMs - currentSongTime;
+    const recId = recordingId;
     const endTimeoutId = setTimeout(() => {
       if (!isPlaying || isPaused) return;
+      if (currentPlaybackRecordingId !== recId) return;
       if (isAutoplay && playAllIndex >= 0 && playAllIndex < recordingsList.length - 1) {
         stopPlayback();
         startPlayback(recordingsList[playAllIndex + 1]);
@@ -1516,6 +1520,7 @@
 
     const endTimeoutId = setTimeout(() => {
       if (!isPlaying || isPaused) return;
+      if (currentPlaybackRecordingId !== recording.id) return;
       if (isAutoplay && playAllIndex >= 0 && playAllIndex < recordingsList.length - 1) {
         stopPlayback();
         startPlayback(recordingsList[playAllIndex + 1]);
@@ -1693,6 +1698,61 @@
     progressBar.style.width = '0%';
     progressWrap.appendChild(progressBar);
     row.appendChild(progressWrap);
+    progressWrap.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+      if (playingRecordingId !== rec.id) return;
+      const dragState = { recId: rec.id, durationMs: durationMs, wasPaused: isPaused };
+      dragState.onMove = (clientX) => {
+        const rect = progressWrap.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        currentSongTime = pct * dragState.durationMs;
+        const progressEl = document.getElementById('progress-' + dragState.recId);
+        if (progressEl) progressEl.style.width = (pct * 100) + '%';
+        const timeEl = document.getElementById('playtime-' + dragState.recId);
+        if (timeEl) timeEl.textContent = formatTime(currentSongTime) + ' / ' + formatTime(dragState.durationMs);
+      };
+      dragState.onEnd = () => {
+        const recToSeek = recordingsList.find(r => r.id === playingRecordingId);
+        if (recToSeek) {
+          const seekTime = currentSongTime;
+          stopPlayback();
+          clearAllHighlights();
+          isPaused = dragState.wasPaused;
+          startPlayback(recToSeek, seekTime);
+        }
+      };
+      startDrag(dragState);
+      dragState.onMove(e.clientX);
+      e.preventDefault();
+    });
+    progressWrap.addEventListener('touchstart', (e) => {
+      e.stopPropagation();
+      if (playingRecordingId !== rec.id) return;
+      const touch = e.touches[0];
+      const dragState = { recId: rec.id, durationMs: durationMs, wasPaused: isPaused };
+      dragState.onMove = (clientX) => {
+        const rect = progressWrap.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        currentSongTime = pct * dragState.durationMs;
+        const progressEl = document.getElementById('progress-' + dragState.recId);
+        if (progressEl) progressEl.style.width = (pct * 100) + '%';
+        const timeEl = document.getElementById('playtime-' + dragState.recId);
+        if (timeEl) timeEl.textContent = formatTime(currentSongTime) + ' / ' + formatTime(dragState.durationMs);
+      };
+      dragState.onEnd = () => {
+        const recToSeek = recordingsList.find(r => r.id === playingRecordingId);
+        if (recToSeek) {
+          const seekTime = currentSongTime;
+          stopPlayback();
+          clearAllHighlights();
+          isPaused = dragState.wasPaused;
+          startPlayback(recToSeek, seekTime);
+        }
+      };
+      startDrag(dragState);
+      dragState.onMove(touch.clientX);
+      e.preventDefault();
+    }, { passive: false });
     const playTime = document.createElement('span');
     playTime.className = 'play-time';
     playTime.id = 'playtime-' + rec.id;
@@ -2234,8 +2294,10 @@
     });
     
     const remainingTime = currentPlaybackDurationMs - currentSongTime;
+    const recId = recordingId;
     const endTimeoutId = setTimeout(() => {
       if (!isPlaying || isPaused) return;
+      if (currentPlaybackRecordingId !== recId) return;
       if (isAutoplay && playAllIndex >= 0 && playAllIndex < recordingsList.length - 1) {
         stopPlayback();
         startPlayback(recordingsList[playAllIndex + 1]);
