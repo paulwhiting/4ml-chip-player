@@ -323,6 +323,11 @@
         <input type="checkbox" id="fullKeyboardCheck"> Show Full Keyboard
       </label>
     </div>
+    <div style="margin-bottom:0.75rem;">
+      <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;">
+        <input type="checkbox" id="autoplayCheck"> Autoplay Next Song
+      </label>
+    </div>
   </div>
   <div class="recordings-section">
     <h2>Recordings</h2>
@@ -331,7 +336,6 @@
         <input type="file" id="uploadRecording" accept=".json,.piano.json,.4ml,.txt,.mid,.midi,.zip,application/json,text/plain,audio/midi,audio/x-midi,application/zip,application/x-zip-compressed" style="display:none">
         <span class="upload-btn">Upload</span>
       </label>
-      <button type="button" class="playAll" id="playAllBtn" disabled>Play All</button>
     </div>
     <div id="recordingsList"></div>
   </div>
@@ -473,12 +477,20 @@
     delete activeOscillators[key];
   }
 
-  function stopAll() {
+  function stopAll(immediate = false) {
     Object.keys(activeOscillators).forEach(n => {
       if (n.startsWith('perc_')) {
         stopNote(parseInt(n.slice(5)), true);
       } else {
-        stopNote(parseInt(n, 10), false);
+        if (immediate) {
+          const obj = activeOscillators[n];
+          if (obj) {
+            try { obj.oscillator.stop(); } catch(e) {}
+            delete activeOscillators[n];
+          }
+        } else {
+          stopNote(parseInt(n, 10), false);
+        }
       }
     });
     percussionBuffer = null;
@@ -587,16 +599,11 @@
   let recordStartTime = 0;
   let recordTimerId = null;
   let isPlaying = false;
-  let playbackFrameId = null;
   let playingRecordingId = null;
-  let isPlayingAll = false;
-  let playAllIndex = 0;
-  let playAllFrameId = null;
   let isPaused = false;
   let playStartTime = 0;
   let currentSongTime = 0;
   let lastProgressUpdateTime = 0;
-  const playAllState = {};
   const recordingsList = [];
   const recordBtn = document.getElementById('recordBtn');
   const playBtn = document.getElementById('playBtn');
@@ -605,11 +612,12 @@
   const recordingTimerEl = document.getElementById('recordingTimer');
   const recordingsListEl = document.getElementById('recordingsList');
   let playbackSpeed = 1.0;
-  let scheduledTimeouts = [];
   let playbackProgressTimer = null;
+  let playbackTimeouts = [];
   let currentPlaybackEvents = null;
   let currentPlaybackDurationMs = 0;
   let currentPlaybackRecordingId = null;
+  let playAllIndex = 0;
   
   let noteVolumeScale = 1.0;
   let percVolumeScale = 1.0;
@@ -1212,7 +1220,10 @@
               events = parse4MLToEvents(text);
             }
             if (events && events.length > 0) {
-              const rec = { id: Date.now() + Math.random(), createdAt: new Date(), events, name };
+              events.sort((a, b) => a.t - b.t);
+              const maxT = events.length > 0 ? Math.max(...events.map(e => e.t)) : 0;
+              const durationMs = maxT + 300;
+              const rec = { id: Date.now() + Math.random(), createdAt: new Date(), events, name, durationMs };
               recordingsList.push(rec);
             }
           });
@@ -1239,7 +1250,10 @@
             showNotification('Failed to parse MIDI file');
             return;
           }
-          const rec = { id: Date.now(), createdAt: new Date(), events };
+          events.sort((a, b) => a.t - b.t);
+          const maxT = events.length > 0 ? Math.max(...events.map(e => e.t)) : 0;
+          const durationMs = maxT + 300;
+          const rec = { id: Date.now(), createdAt: new Date(), events, durationMs };
           recordingsList.push(rec);
           renderRecordingsList();
           updatePlayAllBtn();
@@ -1254,7 +1268,10 @@
           let events = parseExactFormatToEvents(text);
           if (events === null) events = parse4MLToEvents(text);
           if (!events || events.length === 0) return;
-          const rec = { id: Date.now(), createdAt: new Date(), events };
+          events.sort((a, b) => a.t - b.t);
+          const maxT = events.length > 0 ? Math.max(...events.map(e => e.t)) : 0;
+          const durationMs = maxT + 300;
+          const rec = { id: Date.now(), createdAt: new Date(), events, durationMs };
           recordingsList.push(rec);
           renderRecordingsList();
           updatePlayAllBtn();
@@ -1316,14 +1333,14 @@
     isPlaying = false;
     isPaused = false;
     playingRecordingId = null;
-    if (playbackFrameId) cancelAnimationFrame(playbackFrameId);
-    playbackFrameId = null;
     if (playbackProgressTimer) clearInterval(playbackProgressTimer);
     playbackProgressTimer = null;
-    scheduledTimeouts.forEach(id => clearTimeout(id));
-    scheduledTimeouts = [];
+    if (playbackTimeouts) {
+      playbackTimeouts.forEach(id => clearTimeout(id));
+      playbackTimeouts = [];
+    }
     currentPlaybackEvents = null;
-    stopAll();
+    stopAll(true);
     clearAllHighlights();
     document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
     updateNoteDisplay();
@@ -1331,116 +1348,14 @@
     updatePlayAllBtn();
     updatePlayBtn();
     recordBtn.style.display = '';
-  }
-
-  function startPlayAll() {
-    if (recordingsList.length === 0) return;
-    stopPlayback();
-    stopPlayAll();
-    recordBtn.style.display = 'none';
-    const start = Date.now();
-    playStartTime = start;
-    lastProgressUpdateTime = start;
-    currentSongTime = 0;
-    playAllIndex = 0;
-    scheduledTimeouts = [];
-    isPlayingAll = true;
-    isPaused = false;
-    currentPlaybackEvents = null;
-    currentPlaybackRecordingId = null;
-    renderRecordingsList();
-    updatePlayAllBtn();
-    updatePlayBtn();
-    playNextInSequence();
-  }
-
-  function playNextInSequence() {
-    if (!isPlayingAll || isPaused) return;
-    if (playAllIndex >= recordingsList.length) {
-      stopPlayAll();
-      return;
-    }
-    
-    if (playbackProgressTimer) clearInterval(playbackProgressTimer);
-    scheduledTimeouts.forEach(id => clearTimeout(id));
-    scheduledTimeouts = [];
-    stopAll();
-    
-    const rec = recordingsList[playAllIndex];
-    const events = rec.events.slice().sort((a, b) => a.t - b.t);
-    const start = Date.now();
-    playStartTime = start;
-    lastProgressUpdateTime = start;
-    currentSongTime = 0;
-    playingRecordingId = rec.id;
-    currentPlaybackEvents = events;
-    currentPlaybackDurationMs = getRecordingDurationMs(events);
-    currentPlaybackRecordingId = rec.id;
-    
-    const eventToNoteIndex = {};
-    let noteIndex = 0;
-    let lastShown = null;
-    events.forEach((ev, i) => {
-      if (ev.on) {
-        const noteKey = (ev.channel || '') + '-' + ev.noteIdx;
-        if (lastShown !== noteKey) {
-          lastShown = noteKey;
-          eventToNoteIndex[i] = noteIndex;
-          noteIndex++;
-        }
-      }
-    });
-    
-    renderRecordingsList();
-    startProgressUpdate();
-
-    const endTimeoutId = setTimeout(() => {
-      if (!isPlayingAll || isPaused) return;
-      playAllIndex++;
-      playNextInSequence();
-    }, currentPlaybackDurationMs / playbackSpeed + 100);
-    scheduledTimeouts.push(endTimeoutId);
-
-    events.forEach((ev, i) => {
-      const delay = ev.t / playbackSpeed;
-      const timeoutId = setTimeout(() => {
-        if (!isPlayingAll || isPaused) return;
-        if (ev.on) {
-          playNote(ev.noteIdx, ev.percussion, ev.volume);
-          if (noteIdxToEl[ev.noteIdx] !== undefined) setKeyDepressed(ev.noteIdx, true);
-          highlightNote(rec.id, eventToNoteIndex[i], true);
-        } else {
-          stopNote(ev.noteIdx, ev.percussion);
-          if (noteIdxToEl[ev.noteIdx] !== undefined) setKeyDepressed(ev.noteIdx, false);
-          if (eventToNoteIndex[i] !== undefined) highlightNote(rec.id, eventToNoteIndex[i], false);
-        }
-        updateNoteDisplay();
-      }, delay);
-      scheduledTimeouts.push(timeoutId);
-    });
   }
 
   function stopPlayAll() {
-    if (!isPlayingAll) return;
-    isPlayingAll = false;
-    isPaused = false;
-    playAllIndex = 0;
-    if (playbackProgressTimer) clearInterval(playbackProgressTimer);
-    playbackProgressTimer = null;
-    scheduledTimeouts.forEach(id => clearTimeout(id));
-    scheduledTimeouts = [];
-    stopAll();
-    clearAllHighlights();
-    document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
-    updateNoteDisplay();
-    renderRecordingsList();
-    updatePlayAllBtn();
-    updatePlayBtn();
-    recordBtn.style.display = '';
+    // No-op - Play All feature removed
   }
 
   function togglePause() {
-    if (!isPlaying && !isPlayingAll) return;
+    if (!isPlaying) return;
     if (isPaused) {
       isPaused = false;
       lastProgressUpdateTime = Date.now();
@@ -1449,16 +1364,18 @@
         reschedulePlayback(currentSongTime);
         startProgressUpdate();
       }
-      if (isPlayingAll) {
+      if (isPlaying) {
         reschedulePlayback(currentSongTime);
         startProgressUpdate();
       }
     } else {
       isPaused = true;
-      scheduledTimeouts.forEach(id => clearTimeout(id));
-      scheduledTimeouts = [];
+      if (playbackTimeouts) {
+        playbackTimeouts.forEach(id => clearTimeout(id));
+        playbackTimeouts = [];
+      }
       if (playbackProgressTimer) clearInterval(playbackProgressTimer);
-      stopAll();
+      stopAll(true);
       document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
     }
     updatePlayBtn();
@@ -1466,6 +1383,10 @@
 
   function reschedulePlayback(fromSongTime) {
     if (!currentPlaybackEvents) return;
+    if (playbackTimeouts) {
+      playbackTimeouts.forEach(id => clearTimeout(id));
+      playbackTimeouts = [];
+    }
     const events = currentPlaybackEvents;
     const recordingId = currentPlaybackRecordingId;
     
@@ -1502,11 +1423,12 @@
       highlightNote(recordingId, eventToNoteIndex[i], true);
     });
     
+    // Events are already pre-sorted on upload
     events.forEach((ev, i) => {
       if (ev.t <= fromSongTime) return;
       const delay = (ev.t - fromSongTime) / playbackSpeed;
       const timeoutId = setTimeout(() => {
-        if ((!isPlaying && !isPlayingAll) || isPaused) return;
+        if (!isPlaying || isPaused) return;
         if (ev.on) {
           playNote(ev.noteIdx, ev.percussion, ev.volume);
           if (noteIdxToEl[ev.noteIdx] !== undefined) setKeyDepressed(ev.noteIdx, true);
@@ -1519,25 +1441,39 @@
         updateNoteDisplay();
         if (!ev.on && i === events.length - 1) {
           clearAllHighlights();
-          if (isPlayingAll) {
-            playAllIndex++;
-            playNextInSequence();
+          const currentIndex = recordingsList.findIndex(r => r.id === recordingId);
+          if (isAutoplay && currentIndex >= 0 && currentIndex < recordingsList.length - 1) {
+            stopPlayback();
+            startPlayback(recordingsList[currentIndex + 1]);
           } else {
             stopPlayback();
           }
         }
       }, delay);
-      scheduledTimeouts.push(timeoutId);
+      if (!playbackTimeouts) playbackTimeouts = [];
+      playbackTimeouts.push(timeoutId);
     });
+    
+    const remainingTime = currentPlaybackDurationMs - currentSongTime;
+    const endTimeoutId = setTimeout(() => {
+      if (!isPlaying || isPaused) return;
+      if (isAutoplay && playAllIndex >= 0 && playAllIndex < recordingsList.length - 1) {
+        stopPlayback();
+        startPlayback(recordingsList[playAllIndex + 1]);
+      } else {
+        stopPlayback();
+      }
+    }, remainingTime / playbackSpeed + 100);
+    playbackTimeouts.push(endTimeoutId);
     
     updateNoteDisplay();
   }
 
   function updatePlayBtn() {
-    if (isPlaying || isPlayingAll) {
+    if (isPlaying) {
       playBtn.textContent = isPaused ? 'Resume' : 'Pause';
       playBtn.disabled = false;
-      stopBtn.style.display = isPlayingAll ? 'none' : '';
+      stopBtn.style.display = 'none';
     } else {
       playBtn.textContent = 'Play';
       playBtn.disabled = recordingsList.length === 0;
@@ -1549,7 +1485,7 @@
     if (!recording || !recording.events.length) return;
     stopPlayback();
     stopPlayAll();
-    stopAll();
+    stopAll(startTime !== undefined);
     document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
     clearAllHighlights();
     recordBtn.style.display = 'none';
@@ -1558,14 +1494,18 @@
     lastProgressUpdateTime = start;
     currentSongTime = startTime !== undefined ? startTime : 0;
     const durationMs = getRecordingDurationMs(recording.events);
-    const events = recording.events.slice().sort((a, b) => a.t - b.t);
+    const events = recording.events;
     playingRecordingId = recording.id;
     isPlaying = true;
     isPaused = false;
-    scheduledTimeouts = [];
     currentPlaybackEvents = events;
     currentPlaybackDurationMs = durationMs;
     currentPlaybackRecordingId = recording.id;
+    if (isAutoplay) {
+      playAllIndex = recordingsList.findIndex(r => r.id === recording.id);
+    } else {
+      playAllIndex = -1;
+    }
     
     const eventToNoteIndex = {};
     let noteIndex = 0;
@@ -1583,9 +1523,20 @@
       }
     });
     
-    renderRecordingsList();
+    updateRecordingRow(recording.id, true);
     updatePlayBtn();
     startProgressUpdate();
+
+    const endTimeoutId = setTimeout(() => {
+      if (!isPlaying || isPaused) return;
+      if (isAutoplay && playAllIndex >= 0 && playAllIndex < recordingsList.length - 1) {
+        stopPlayback();
+        startPlayback(recordingsList[playAllIndex + 1]);
+      } else {
+        stopPlayback();
+      }
+    }, durationMs / playbackSpeed + 100);
+    playbackTimeouts.push(endTimeoutId);
 
     if (startTime !== undefined && startTime > 0) {
       const notesToRestart = [];
@@ -1606,6 +1557,7 @@
       });
     }
 
+    // Events are already pre-sorted on upload - no need to sort here
     events.forEach((ev, i) => {
       if (startTime !== undefined && ev.t <= startTime) return;
       const delay = startTime !== undefined ? (ev.t - startTime) / playbackSpeed : ev.t / playbackSpeed;
@@ -1623,17 +1575,24 @@
         updateNoteDisplay();
         if (!ev.on && i === events.length - 1) {
           clearAllHighlights();
-          stopPlayback();
+          const currentIndex = recordingsList.findIndex(r => r.id === recording.id);
+          if (isAutoplay && currentIndex >= 0 && currentIndex < recordingsList.length - 1) {
+            stopPlayback();
+            startPlayback(recordingsList[currentIndex + 1]);
+          } else {
+            stopPlayback();
+          }
         }
       }, delay);
-      scheduledTimeouts.push(timeoutId);
+      if (!playbackTimeouts) playbackTimeouts = [];
+      playbackTimeouts.push(timeoutId);
     });
   }
 
   function startProgressUpdate() {
     if (playbackProgressTimer) clearInterval(playbackProgressTimer);
     playbackProgressTimer = setInterval(() => {
-      if ((!isPlaying && !isPlayingAll) || isPaused) return;
+      if (!isPlaying || isPaused) return;
       if (!isDraggingProgressGlobal) {
         const now = Date.now();
         currentSongTime += (now - lastProgressUpdateTime) * playbackSpeed;
@@ -1682,10 +1641,39 @@
     const i = recordingsList.findIndex(r => r.id === id);
     if (i === -1) return;
     if (playingRecordingId === id) stopPlayback();
-    if (isPlayingAll) { stopPlayAll(); }
+    if (isPlaying) { stopPlayback(); }
     recordingsList.splice(i, 1);
     renderRecordingsList();
     updatePlayAllBtn();
+  }
+
+  function updateRecordingRow(recordingId, isPlaying) {
+    const row = recordingsListEl.querySelector('[data-rec-id="' + recordingId + '"]');
+    if (!row) return;
+    const playBtn = row.querySelector('button');
+    if (playBtn) {
+      playBtn.textContent = isPlaying ? 'Stop' : 'Play';
+    }
+    const progressWrap = row.querySelector('.progress-wrap');
+    if (progressWrap) {
+      progressWrap.style.display = isPlaying ? 'block' : 'none';
+    }
+    const playTime = row.querySelector('.play-time');
+    if (playTime) {
+      playTime.style.display = isPlaying ? 'inline' : 'none';
+      if (isPlaying) {
+        const rec = recordingsList.find(r => r.id === recordingId);
+        if (rec) {
+          const durationMs = rec.durationMs || 0;
+          playTime.textContent = '0:00.0 / ' + formatTime(durationMs);
+        }
+      }
+    }
+    if (isPlaying) {
+      row.classList.add('playing');
+    } else {
+      row.classList.remove('playing');
+    }
   }
 
   function renderRecordingsList() {
@@ -1695,8 +1683,8 @@
     });
     recordingsListEl.innerHTML = '';
     recordingsList.forEach(rec => {
-      const durationMs = getRecordingDurationMs(rec.events);
-      const isPlayingThis = playingRecordingId === rec.id || (isPlayingAll && playAllState[rec.id] && !playAllState[rec.id].done);
+      const durationMs = rec.durationMs || getRecordingDurationMs(rec.events);
+      const isPlayingThis = playingRecordingId === rec.id;
       const row = document.createElement('div');
       row.className = 'recording-item' + (isPlayingThis ? ' playing' : '');
       row.dataset.recId = String(rec.id);
@@ -1797,11 +1785,11 @@
       playBtn.type = 'button';
       playBtn.onclick = (e) => {
         e.stopPropagation();
-        if (isPlayingThis) {
-          if (isPlayingAll) stopPlayAll();
-          else stopPlayback();
+        const isCurrentlyPlaying = playingRecordingId === rec.id;
+        if (isCurrentlyPlaying) {
+          stopPlayback();
         } else {
-          if (isPlayingAll) stopPlayAll();
+          if (isPlaying) stopPlayback();
           startPlayback(rec);
         }
       };
@@ -1972,7 +1960,7 @@
       if (isRecording) stopRecording();
       stopPlayback();
       stopPlayAll();
-      stopAll();
+      stopAll(true);
       document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
       noteDisplayEl.textContent = '';
       e.preventDefault();
@@ -1985,7 +1973,7 @@
     }
     if (e.key === ' ') {
       e.preventDefault();
-      if (isPlaying || isPlayingAll) {
+      if (isPlaying) {
         togglePause();
       } else if (recordingsList.length > 0) {
         startPlayback(recordingsList[recordingsList.length - 1]);
@@ -2015,7 +2003,7 @@
 
   recordBtn.addEventListener('click', () => { startRecording(); });
   playBtn.addEventListener('click', () => {
-    if (isPlaying || isPlayingAll) {
+    if (isPlaying) {
       togglePause();
     } else if (recordingsList.length > 0) {
       startPlayback(recordingsList[recordingsList.length - 1]);
@@ -2023,22 +2011,9 @@
   });
   stopBtn.addEventListener('click', () => {
     if (isPlaying) stopPlayback();
-    if (isPlayingAll) stopPlayAll();
-  });
-
-  const playAllBtn = document.getElementById('playAllBtn');
-  playAllBtn.addEventListener('click', () => {
-    if (isPlayingAll) stopPlayAll();
-    else startPlayAll();
   });
 
   function updatePlayAllBtn() {
-    playAllBtn.disabled = recordingsList.length === 0;
-    if (isPlayingAll) {
-      playAllBtn.textContent = 'Stop All (' + (playAllIndex + 1) + '/' + recordingsList.length + ')';
-    } else {
-      playAllBtn.textContent = 'Play All';
-    }
   }
 
   document.getElementById('speedSlider').addEventListener('input', (e) => {
@@ -2049,7 +2024,7 @@
     playbackSpeed = newSpeed;
     lastProgressUpdateTime = Date.now();
     
-    if (!isPlaying && !isPlayingAll) {
+    if (!isPlaying) {
       return;
     }
     
@@ -2057,7 +2032,7 @@
       return;
     }
     
-    if (isPlaying || isPlayingAll) {
+    if (isPlaying) {
       rescheduleForSpeedChange();
     }
   });
@@ -2090,10 +2065,17 @@
     renderKeys();
     document.querySelectorAll('.piano-key').forEach(bindPointerToKey);
   });
+
+  let isAutoplay = false;
+  document.getElementById('autoplayCheck').addEventListener('change', (e) => {
+    isAutoplay = e.target.checked;
+  });
   
   function rescheduleForSpeedChange() {
-    scheduledTimeouts.forEach(id => clearTimeout(id));
-    scheduledTimeouts = [];
+    if (playbackTimeouts) {
+      playbackTimeouts.forEach(id => clearTimeout(id));
+      playbackTimeouts = [];
+    }
     
     const recordingId = currentPlaybackRecordingId;
     const events = currentPlaybackEvents;
@@ -2112,6 +2094,7 @@
       }
     });
     
+    // Events are already pre-sorted on upload
     events.forEach((ev, i) => {
       if (ev.t < currentSongTime) return;
       
@@ -2122,7 +2105,7 @@
       }
       
       const timeoutId = setTimeout(() => {
-        if ((!isPlaying && !isPlayingAll) || isPaused) return;
+        if (!isPlaying || isPaused) return;
         if (ev.on) {
           playNote(ev.noteIdx, ev.percussion, ev.volume);
           if (noteIdxToEl[ev.noteIdx] !== undefined) setKeyDepressed(ev.noteIdx, true);
@@ -2133,13 +2116,26 @@
           if (eventToNoteIndex[i] !== undefined) highlightNote(recordingId, eventToNoteIndex[i], false);
         }
         updateNoteDisplay();
-        if (!ev.on && i === events.length - 1 && !isPlayingAll) {
+        if (!ev.on && i === events.length - 1) {
           clearAllHighlights();
           stopPlayback();
         }
       }, delay);
-      scheduledTimeouts.push(timeoutId);
+      if (!playbackTimeouts) playbackTimeouts = [];
+      playbackTimeouts.push(timeoutId);
     });
+    
+    const remainingTime = currentPlaybackDurationMs - currentSongTime;
+    const endTimeoutId = setTimeout(() => {
+      if (!isPlaying || isPaused) return;
+      if (isAutoplay && playAllIndex >= 0 && playAllIndex < recordingsList.length - 1) {
+        stopPlayback();
+        startPlayback(recordingsList[playAllIndex + 1]);
+      } else {
+        stopPlayback();
+      }
+    }, remainingTime / playbackSpeed + 100);
+    playbackTimeouts.push(endTimeoutId);
   }
 
   document.getElementById('uploadRecording').addEventListener('change', (e) => {
