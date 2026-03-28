@@ -185,6 +185,10 @@
     }
     .recording-item:hover { background: #253340; }
     .recording-item.playing { border-color: #6a8; }
+    .recording-item.loading { opacity: 0.7; font-style: italic; }
+    .recording-item.error { border-color: #e66; }
+    .recording-item.error .timestamp { color: #e88; }
+    .recording-item.error .duration { color: #e88; }
     .recording-item .timestamp { flex: 1; font-variant-numeric: tabular-nums; font-size: 0.85rem; }
     .recording-item .duration { font-size: 0.8rem; opacity: 0.85; margin-left: 0.25rem; }
     .recording-item .progress-wrap {
@@ -1183,6 +1187,7 @@
         }).filter(Boolean));
         
         const promises = [];
+        let fileIndex = 0;
         zip.forEach((relativePath, zipEntry) => {
           if (zipEntry.dir) return;
           const lowerPath = relativePath.toLowerCase();
@@ -1197,30 +1202,38 @@
           }
           usedNames.add(name);
           
+          const tempId = 'loading-' + fileIndex;
+          fileIndex++;
+          createLoadingRow(name, tempId);
+          
           const promise = zipEntry.async('arraybuffer').then((arrayBuffer) => {
             let events = null;
             const fileExt = lowerPath.split('.').pop();
-            if (fileExt === 'mid' || fileExt === 'midi') {
-              events = parseMIDIToEvents(arrayBuffer);
-            } else if (fileExt === '4ml') {
-              const text = new TextDecoder().decode(arrayBuffer);
-              events = parse4MLToEvents(text);
+            try {
+              if (fileExt === 'mid' || fileExt === 'midi') {
+                events = parseMIDIToEvents(arrayBuffer);
+              } else if (fileExt === '4ml') {
+                const text = new TextDecoder().decode(arrayBuffer);
+                events = parse4MLToEvents(text);
+              }
+              if (events && events.length > 0) {
+                events.sort((a, b) => a.t - b.t);
+                const maxT = events.length > 0 ? Math.max(...events.map(e => e.t)) : 0;
+                const durationMs = maxT + 300;
+                const rec = { id: Date.now() + Math.random(), createdAt: new Date(), events, name, durationMs };
+                recordingsList.push(rec);
+                rec.notesText = getNotesText(events);
+                replaceLoadingRow(rec, tempId);
+              } else {
+                showRowError(tempId, name, 'No valid notes found');
+              }
+            } catch (err) {
+              showRowError(tempId, name, err.message || 'Parse error');
             }
-            if (events && events.length > 0) {
-              events.sort((a, b) => a.t - b.t);
-              const maxT = events.length > 0 ? Math.max(...events.map(e => e.t)) : 0;
-              const durationMs = maxT + 300;
-              const rec = { id: Date.now() + Math.random(), createdAt: new Date(), events, name, durationMs };
-              recordingsList.push(rec);
-              rec.notesText = getNotesText(events);
-            }
+          }).catch((err) => {
+            showRowError(tempId, name, err.message || 'Load error');
           });
           promises.push(promise);
-        });
-        
-        Promise.all(promises).then(() => {
-          renderRecordingsList();
-
         });
       }).catch((e) => {
         console.warn('ZIP parse failed', e);
@@ -1614,8 +1627,137 @@
     if (playingRecordingId === id) stopPlayback();
     if (isPlaying) { stopPlayback(); }
     recordingsList.splice(i, 1);
-    const row = recordingsListEl.querySelector('[data-rec-id="' + id + '"]');
+    const row = recordingsListEl.querySelector('[data-rec-id="' + id + '"]') 
+             || recordingsListEl.querySelector('[data-temp-id="' + id + '"]');
     if (row) row.remove();
+  }
+
+  function createLoadingRow(name, tempId) {
+    const row = document.createElement('div');
+    row.className = 'recording-item loading';
+    row.dataset.tempId = tempId;
+    row.innerHTML = '<span class="timestamp">Loading: ' + name + '...</span><span class="duration"></span>';
+    recordingsListEl.appendChild(row);
+    return row;
+  }
+
+  function showRowError(tempId, name, errorMsg) {
+    const row = recordingsListEl.querySelector('[data-temp-id="' + tempId + '"]');
+    if (!row) return;
+    row.className = 'recording-item error';
+    const durationSpan = row.querySelector('.duration');
+    if (durationSpan) durationSpan.textContent = errorMsg;
+    const delBtn = document.createElement('button');
+    delBtn.textContent = 'Delete';
+    delBtn.type = 'button';
+    delBtn.className = 'delete';
+    delBtn.onclick = (e) => { e.stopPropagation(); deleteRecording(tempId); };
+    row.appendChild(delBtn);
+  }
+
+  function replaceLoadingRow(rec, tempId) {
+    const row = recordingsListEl.querySelector('[data-temp-id="' + tempId + '"]');
+    if (!row) return;
+    const durationMs = rec.durationMs || 0;
+    const isPlayingThis = false;
+    row.className = 'recording-item';
+    row.dataset.recId = String(rec.id);
+    row.dataset.tempId = null;
+    delete row.dataset.tempId;
+    row.innerHTML = '';
+    const ts = document.createElement('span');
+    ts.className = 'timestamp';
+    ts.textContent = rec.name || formatTimestamp(rec.createdAt);
+    row.appendChild(ts);
+    if (!rec.name) {
+      const tsActual = document.createElement('span');
+      tsActual.className = 'timestamp-actual';
+      tsActual.style.opacity = '0.5';
+      tsActual.style.fontSize = '0.75rem';
+      tsActual.style.marginLeft = '0.5rem';
+      tsActual.textContent = formatTimestamp(rec.createdAt);
+      row.appendChild(tsActual);
+    }
+    const durSpan = document.createElement('span');
+    durSpan.className = 'duration';
+    durSpan.textContent = formatTime(durationMs);
+    row.appendChild(durSpan);
+    const progressWrap = document.createElement('div');
+    progressWrap.className = 'progress-wrap';
+    progressWrap.style.display = 'none';
+    const progressBar = document.createElement('div');
+    progressBar.className = 'progress-bar';
+    progressBar.id = 'progress-' + rec.id;
+    progressBar.style.width = '0%';
+    progressWrap.appendChild(progressBar);
+    row.appendChild(progressWrap);
+    const playTime = document.createElement('span');
+    playTime.className = 'play-time';
+    playTime.id = 'playtime-' + rec.id;
+    playTime.style.display = 'none';
+    row.appendChild(playTime);
+    const playBtn = document.createElement('button');
+    playBtn.textContent = 'Play';
+    playBtn.type = 'button';
+    playBtn.onclick = (e) => {
+      e.stopPropagation();
+      const isCurrentlyPlaying = playingRecordingId === rec.id;
+      if (isCurrentlyPlaying) {
+        stopPlayback();
+      } else {
+        if (isPlaying) stopPlayback();
+        startPlayback(rec);
+      }
+    };
+    row.appendChild(playBtn);
+    const dl4mlBtn = document.createElement('button');
+    dl4mlBtn.className = 'btn-4ml';
+    dl4mlBtn.textContent = '4ML';
+    dl4mlBtn.type = 'button';
+    dl4mlBtn.title = 'Download as 4ML';
+    dl4mlBtn.onclick = (e) => { e.stopPropagation(); download4ML(rec); };
+    row.appendChild(dl4mlBtn);
+    const dlExactBtn = document.createElement('button');
+    dlExactBtn.type = 'button';
+    dlExactBtn.title = 'Download as JSON';
+    dlExactBtn.innerHTML = '<svg class="btn-download-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+    dlExactBtn.onclick = (e) => { e.stopPropagation(); downloadExact(rec); };
+    row.appendChild(dlExactBtn);
+    const delBtn = document.createElement('button');
+    delBtn.textContent = 'Delete';
+    delBtn.type = 'button';
+    delBtn.className = 'delete';
+    delBtn.onclick = (e) => { e.stopPropagation(); deleteRecording(rec.id); };
+    row.appendChild(delBtn);
+    const details = document.createElement('div');
+    details.className = 'recording-details';
+    details.id = 'details-' + rec.id;
+    const noteLines = rec.notesText || getNotesText(rec.events);
+    const notesDiv = document.createElement('div');
+    notesDiv.className = 'notes-text';
+    notesDiv.id = 'notes-' + rec.id;
+    if (noteLines.length === 0) {
+      notesDiv.textContent = '(no notes)';
+    } else {
+      noteLines.forEach(line => {
+        const p = document.createElement('p');
+        p.className = 'note-line';
+        p.id = 'note-' + rec.id + '-' + line.id;
+        p.textContent = line.text;
+        notesDiv.appendChild(p);
+      });
+    }
+    details.innerHTML = '<div style="display:flex;justify-content:space-between;"><span><strong>Duration:</strong> ' + formatTime(durationMs) + '</span><span><strong>Channels:</strong> ' + (function() {
+      const channels = new Set(rec.events.map(e => e.channel));
+      return channels.size;
+    })() + '</span></div><strong>Notes:</strong>';
+    details.appendChild(notesDiv);
+    row.appendChild(details);
+    row.addEventListener('click', (e) => {
+      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+      if (details.contains(e.target)) return;
+      details.classList.toggle('visible');
+    });
   }
 
   function updateRecordingRow(recordingId, isPlaying) {
