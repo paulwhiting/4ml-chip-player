@@ -1713,11 +1713,10 @@
       };
       dragState.onEnd = () => {
         const recToSeek = recordingsList.find(r => r.id === playingRecordingId);
-        if (recToSeek) {
+        if (recToSeek && !dragState.wasPaused) {
           const seekTime = currentSongTime;
           stopPlayback();
           clearAllHighlights();
-          isPaused = dragState.wasPaused;
           startPlayback(recToSeek, seekTime);
         }
       };
@@ -1741,11 +1740,10 @@
       };
       dragState.onEnd = () => {
         const recToSeek = recordingsList.find(r => r.id === playingRecordingId);
-        if (recToSeek) {
+        if (recToSeek && !dragState.wasPaused) {
           const seekTime = currentSongTime;
           stopPlayback();
           clearAllHighlights();
-          isPaused = dragState.wasPaused;
           startPlayback(recToSeek, seekTime);
         }
       };
@@ -1908,11 +1906,10 @@
         };
         dragState.onEnd = () => {
           const recToSeek = recordingsList.find(r => r.id === playingRecordingId);
-          if (recToSeek) {
+          if (recToSeek && !dragState.wasPaused) {
             const seekTime = currentSongTime;
             stopPlayback();
             clearAllHighlights();
-            isPaused = dragState.wasPaused;
             startPlayback(recToSeek, seekTime);
           }
         };
@@ -1936,11 +1933,10 @@
         };
         dragState.onEnd = () => {
           const recToSeek = recordingsList.find(r => r.id === playingRecordingId);
-          if (recToSeek) {
+          if (recToSeek && !dragState.wasPaused) {
             const seekTime = currentSongTime;
             stopPlayback();
             clearAllHighlights();
-            isPaused = dragState.wasPaused;
             startPlayback(recToSeek, seekTime);
           }
         };
