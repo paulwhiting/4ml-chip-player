@@ -1212,6 +1212,7 @@
               const durationMs = maxT + 300;
               const rec = { id: Date.now() + Math.random(), createdAt: new Date(), events, name, durationMs };
               recordingsList.push(rec);
+              rec.notesText = getNotesText(events);
             }
           });
           promises.push(promise);
@@ -1242,8 +1243,7 @@
           const durationMs = maxT + 300;
           const rec = { id: Date.now(), createdAt: new Date(), events, durationMs };
           recordingsList.push(rec);
-          renderRecordingsList();
-
+          rec.notesText = getNotesText(events);
         } catch (e) { console.warn('MIDI parse failed', e); showNotification('Failed to parse MIDI file'); }
       };
       reader.readAsArrayBuffer(file);
@@ -1260,7 +1260,7 @@
           const durationMs = maxT + 300;
           const rec = { id: Date.now(), createdAt: new Date(), events, durationMs };
           recordingsList.push(rec);
-          renderRecordingsList();
+          rec.notesText = getNotesText(events);
 
         } catch (e) { console.warn('Upload parse failed', e); }
       };
@@ -1308,8 +1308,13 @@
     recordBtn.textContent = 'Record';
     recordingIndicator.classList.remove('visible');
     if (recordedEvents.length > 0) {
-      const rec = { id: Date.now(), createdAt: new Date(), events: recordedEvents.slice() };
+      const events = recordedEvents.slice();
+      events.sort((a, b) => a.t - b.t);
+      const maxT = events.length > 0 ? Math.max(...events.map(e => e.t)) : 0;
+      const durationMs = maxT + 300;
+      const rec = { id: Date.now(), createdAt: new Date(), events, durationMs };
       recordingsList.push(rec);
+      rec.notesText = getNotesText(events);
       renderRecordingsList();
     }
   }
@@ -1609,7 +1614,8 @@
     if (playingRecordingId === id) stopPlayback();
     if (isPlaying) { stopPlayback(); }
     recordingsList.splice(i, 1);
-    renderRecordingsList();
+    const row = recordingsListEl.querySelector('[data-rec-id="' + id + '"]');
+    if (row) row.remove();
   }
 
   function updateRecordingRow(recordingId, isPlaying) {
@@ -1781,7 +1787,7 @@
       const details = document.createElement('div');
       details.className = 'recording-details';
       details.id = 'details-' + rec.id;
-      const noteLines = getNotesText(rec.events);
+      const noteLines = rec.notesText || getNotesText(rec.events);
       const notesDiv = document.createElement('div');
       notesDiv.className = 'notes-text';
       notesDiv.id = 'notes-' + rec.id;
