@@ -1724,6 +1724,9 @@
       dragState.onMove(e.clientX);
       e.preventDefault();
     });
+    progressWrap.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
     progressWrap.addEventListener('touchstart', (e) => {
       e.stopPropagation();
       if (playingRecordingId !== rec.id) return;
@@ -1916,6 +1919,9 @@
         startDrag(dragState);
         dragState.onMove(e.clientX);
         e.preventDefault();
+      });
+      progressWrap.addEventListener('click', (e) => {
+        e.stopPropagation();
       });
       progressWrap.addEventListener('touchstart', (e) => {
         e.stopPropagation();
