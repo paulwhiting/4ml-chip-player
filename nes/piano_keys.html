@@ -1460,7 +1460,7 @@
     if (isPlaying) {
       playBtn.textContent = isPaused ? 'Resume' : 'Pause';
       playBtn.disabled = false;
-      stopBtn.style.display = 'none';
+      stopBtn.style.display = '';
     } else {
       playBtn.textContent = 'Play';
       playBtn.disabled = recordingsList.length === 0;
