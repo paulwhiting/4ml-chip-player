@@ -148,9 +148,6 @@
     .transport button.record.active { background: #6a2020; border-color: #a44; }
     .transport button.play { color: #8e8; }
     .transport button.play:disabled { opacity: 0.5; cursor: not-allowed; }
-    .transport button.playAll { color: #a8dadc; background: #1a3a4a; border-color: #3a6a7a; }
-    .transport button.playAll:disabled { opacity: 0.5; cursor: not-allowed; }
-    .recordings-toolbar button.playAll { color: #a8dadc; background: #1a3a4a; border-color: #3a6a7a; }
     .recording-indicator {
       display: none;
       align-items: center;
@@ -276,7 +273,7 @@
 <body>
   <h1>Piano Keys</h1>
   <p class="instructions">
-    White: lower row (z–/) and top row (q–\). Black: home row (s–;) and number row (2–0). ` or ~ record, Space play/pause, Escape stop. Click a recording to see details; use its Play button to play. Use "Play All" to play all recordings simultaneously.
+    White: lower row (z–/) and top row (q–\). Black: home row (s–;) and number row (2–0). ` or ~ record, Space play/pause, Escape stop. Click a recording to see details; use its Play button to play. Enable "Autoplay Next Song" in settings to play through recordings sequentially.
   </p>
   <div class="piano-wrap" id="piano"></div>
   <div class="note-display" id="noteDisplay"></div>
@@ -371,15 +368,6 @@
 
   KEY_TO_NOTE["-"] = 35;
   KEY_TO_NOTE["["] = 36;
-
-  function noteNameToFreq(name) {
-    const sharp = name.includes('#') ? 1 : 0;
-    const letter = name[0];
-    const octave = parseInt(name[name.length - 1], 10);
-    const offsets = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
-    const midi = 60 + (octave - 4) * 12 + offsets[letter] + sharp;
-    return 440 * Math.pow(2, (midi - 69) / 12);
-  }
 
   function noteIdxToName(noteIdx) {
     const midi = noteIdx + 47;
@@ -601,7 +589,6 @@
   let isPlaying = false;
   let playingRecordingId = null;
   let isPaused = false;
-  let playStartTime = 0;
   let currentSongTime = 0;
   let lastProgressUpdateTime = 0;
   const recordingsList = [];
@@ -1232,7 +1219,7 @@
         
         Promise.all(promises).then(() => {
           renderRecordingsList();
-          updatePlayAllBtn();
+
         });
       }).catch((e) => {
         console.warn('ZIP parse failed', e);
@@ -1256,7 +1243,7 @@
           const rec = { id: Date.now(), createdAt: new Date(), events, durationMs };
           recordingsList.push(rec);
           renderRecordingsList();
-          updatePlayAllBtn();
+
         } catch (e) { console.warn('MIDI parse failed', e); showNotification('Failed to parse MIDI file'); }
       };
       reader.readAsArrayBuffer(file);
@@ -1274,7 +1261,7 @@
           const rec = { id: Date.now(), createdAt: new Date(), events, durationMs };
           recordingsList.push(rec);
           renderRecordingsList();
-          updatePlayAllBtn();
+
         } catch (e) { console.warn('Upload parse failed', e); }
       };
       reader.readAsText(file);
@@ -1324,7 +1311,6 @@
       const rec = { id: Date.now(), createdAt: new Date(), events: recordedEvents.slice() };
       recordingsList.push(rec);
       renderRecordingsList();
-      updatePlayAllBtn();
     }
   }
 
@@ -1335,23 +1321,16 @@
     playingRecordingId = null;
     if (playbackProgressTimer) clearInterval(playbackProgressTimer);
     playbackProgressTimer = null;
-    if (playbackTimeouts) {
-      playbackTimeouts.forEach(id => clearTimeout(id));
-      playbackTimeouts = [];
-    }
+    playbackTimeouts.forEach(id => clearTimeout(id));
+    playbackTimeouts = [];
     currentPlaybackEvents = null;
     stopAll(true);
     clearAllHighlights();
     document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
     updateNoteDisplay();
     renderRecordingsList();
-    updatePlayAllBtn();
     updatePlayBtn();
     recordBtn.style.display = '';
-  }
-
-  function stopPlayAll() {
-    // No-op - Play All feature removed
   }
 
   function togglePause() {
@@ -1359,15 +1338,8 @@
     if (isPaused) {
       isPaused = false;
       lastProgressUpdateTime = Date.now();
-      playStartTime = Date.now();
-      if (isPlaying) {
-        reschedulePlayback(currentSongTime);
-        startProgressUpdate();
-      }
-      if (isPlaying) {
-        reschedulePlayback(currentSongTime);
-        startProgressUpdate();
-      }
+      reschedulePlayback(currentSongTime);
+      startProgressUpdate();
     } else {
       isPaused = true;
       if (playbackTimeouts) {
@@ -1383,10 +1355,8 @@
 
   function reschedulePlayback(fromSongTime) {
     if (!currentPlaybackEvents) return;
-    if (playbackTimeouts) {
-      playbackTimeouts.forEach(id => clearTimeout(id));
-      playbackTimeouts = [];
-    }
+    playbackTimeouts.forEach(id => clearTimeout(id));
+    playbackTimeouts = [];
     const events = currentPlaybackEvents;
     const recordingId = currentPlaybackRecordingId;
     
@@ -1450,7 +1420,6 @@
           }
         }
       }, delay);
-      if (!playbackTimeouts) playbackTimeouts = [];
       playbackTimeouts.push(timeoutId);
     });
     
@@ -1484,14 +1453,12 @@
   function startPlayback(recording, startTime) {
     if (!recording || !recording.events.length) return;
     stopPlayback();
-    stopPlayAll();
+    stopPlayback();
     stopAll(startTime !== undefined);
     document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
     clearAllHighlights();
     recordBtn.style.display = 'none';
-    const start = Date.now();
-    playStartTime = start;
-    lastProgressUpdateTime = start;
+    lastProgressUpdateTime = Date.now();
     currentSongTime = startTime !== undefined ? startTime : 0;
     const durationMs = getRecordingDurationMs(recording.events);
     const events = recording.events;
@@ -1584,7 +1551,6 @@
           }
         }
       }, delay);
-      if (!playbackTimeouts) playbackTimeouts = [];
       playbackTimeouts.push(timeoutId);
     });
   }
@@ -1644,7 +1610,6 @@
     if (isPlaying) { stopPlayback(); }
     recordingsList.splice(i, 1);
     renderRecordingsList();
-    updatePlayAllBtn();
   }
 
   function updateRecordingRow(recordingId, isPlaying) {
@@ -1803,9 +1768,9 @@
       row.appendChild(dl4mlBtn);
       const dlExactBtn = document.createElement('button');
       dlExactBtn.type = 'button';
-      dlExactBtn.title = 'Download as 4ML';
+      dlExactBtn.title = 'Download as JSON';
       dlExactBtn.innerHTML = '<svg class="btn-download-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-      dlExactBtn.onclick = (e) => { e.stopPropagation(); download4ML(rec); };
+      dlExactBtn.onclick = (e) => { e.stopPropagation(); downloadExact(rec); };
       row.appendChild(dlExactBtn);
       const delBtn = document.createElement('button');
       delBtn.textContent = 'Delete';
@@ -1959,7 +1924,7 @@
     if (e.key === 'Escape') {
       if (isRecording) stopRecording();
       stopPlayback();
-      stopPlayAll();
+      stopPlayback();
       stopAll(true);
       document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
       noteDisplayEl.textContent = '';
@@ -2012,9 +1977,6 @@
   stopBtn.addEventListener('click', () => {
     if (isPlaying) stopPlayback();
   });
-
-  function updatePlayAllBtn() {
-  }
 
   document.getElementById('speedSlider').addEventListener('input', (e) => {
     const newSpeed = parseInt(e.target.value, 10) / 100;
@@ -2072,10 +2034,8 @@
   });
   
   function rescheduleForSpeedChange() {
-    if (playbackTimeouts) {
-      playbackTimeouts.forEach(id => clearTimeout(id));
-      playbackTimeouts = [];
-    }
+    playbackTimeouts.forEach(id => clearTimeout(id));
+    playbackTimeouts = [];
     
     const recordingId = currentPlaybackRecordingId;
     const events = currentPlaybackEvents;
@@ -2121,7 +2081,6 @@
           stopPlayback();
         }
       }, delay);
-      if (!playbackTimeouts) playbackTimeouts = [];
       playbackTimeouts.push(timeoutId);
     });
     
