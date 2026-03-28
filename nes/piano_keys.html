@@ -1947,7 +1947,7 @@
       if (isPlaying) {
         togglePause();
       } else if (recordingsList.length > 0) {
-        startPlayback(recordingsList[recordingsList.length - 1]);
+        startPlayback(recordingsList[0]);
       }
       return;
     }
@@ -1977,7 +1977,7 @@
     if (isPlaying) {
       togglePause();
     } else if (recordingsList.length > 0) {
-      startPlayback(recordingsList[recordingsList.length - 1]);
+      startPlayback(recordingsList[0]);
     }
   });
   stopBtn.addEventListener('click', () => {
