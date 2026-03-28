@@ -1334,6 +1334,7 @@
 
   function stopPlayback() {
     if (!isPlaying) return;
+    const wasPlayingId = playingRecordingId;
     isPlaying = false;
     isPaused = false;
     playingRecordingId = null;
@@ -1346,7 +1347,9 @@
     clearAllHighlights();
     document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
     updateNoteDisplay();
-    renderRecordingsList();
+    if (wasPlayingId) {
+      updateRecordingRow(wasPlayingId, false);
+    }
     updatePlayBtn();
     recordBtn.style.display = '';
   }
@@ -1470,7 +1473,6 @@
 
   function startPlayback(recording, startTime) {
     if (!recording || !recording.events.length) return;
-    stopPlayback();
     stopPlayback();
     stopAll(startTime !== undefined);
     document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
@@ -2071,7 +2073,6 @@
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
       if (isRecording) stopRecording();
-      stopPlayback();
       stopPlayback();
       stopAll(true);
       document.querySelectorAll('.piano-key.depressed').forEach(el => el.classList.remove('depressed'));
