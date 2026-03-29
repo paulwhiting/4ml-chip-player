@@ -84,7 +84,11 @@ def throw_error(error_number,additional_info_1,additional_info_2):
 		case 3:
 			print(f"Command '{additional_info_1}' must have a value.", file=sys.stderr)
 		case 4:
-			print(f"Command '{additional_info_1}' is {additional_info_2}, must be 1 - 16.", file=sys.stderr)
+			# Show appropriate range based on command
+			if additional_info_1 == 'o':
+				print(f"Command '{additional_info_1}' is {additional_info_2}, must be -1 - 14.", file=sys.stderr)
+			else:
+				print(f"Command '{additional_info_1}' is {additional_info_2}, must be 1 - 16.", file=sys.stderr)
 		case 5:
 			print(f"Note '{additional_info_1}{additional_info_2}' is an invalid duration.", file=sys.stderr)
 		case 6:
@@ -203,7 +207,7 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 	tick_count = 0
 
 	if previous_duration == None:
-		previous_duration = 8
+		previous_duration = '8'
 	if octave == None:
 		octave = 3
 	if volume == None:
@@ -392,13 +396,20 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 
 			index += 1
 
+			# check for negative sign (needed for octave)
+			is_negative = False
+			if current_char == 'o' and index < len(input_string) and input_string[index] == '-':
+				is_negative = True
+				function_value += '-'
+				index += 1
+
 			# check for the next characters after the letter
-			while index < len(input_string) and input_string[index].isdigit() and len(function_value) < 3:
+			while index < len(input_string) and input_string[index].isdigit() and len(function_value) < 4:
 				function_value += input_string[index]
 				index += 1
 
 			# you've got to have a value with it!
-			if not function_value:
+			if not function_value or function_value == '-':
 				throw_error(3,current_char,0)
 
 			# if it's an octave, store the value for the '<' and '>' commands
@@ -410,8 +421,13 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 
 			# convert string to int, check if in bounds
 			function_nibble = int(function_value)
-			if function_nibble > 16 or function_nibble < 1:
-				throw_error(4, current_char, function_nibble)
+			# octave: -1 to 14, volume: 1 to 16
+			if current_char == 'o':
+				if function_nibble > 14 or function_nibble < -1:
+					throw_error(4, current_char, function_nibble)
+			elif current_char == 'v':
+				if function_nibble > 16 or function_nibble < 1:
+					throw_error(4, current_char, function_nibble)
 
 			# volume-specific conditions
 			if current_char == 'v':
@@ -426,7 +442,11 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 				volume = function_nibble
 
 			# squash the command and value to a single byte and output
-			output_byte = (command_nibble << 4) | (function_nibble - 1)
+			# octave uses +1 encoding (new), volume uses -1 encoding (old)
+			if current_char == 'o':
+				output_byte = (command_nibble << 4) | (function_nibble + 1)
+			else:
+				output_byte = (command_nibble << 4) | (function_nibble - 1)
 			output_bytecode.append(output_byte)
 
 		# process two-byte commands with values
@@ -500,6 +520,7 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 
 		# process relative octave jumps
 		elif current_char in ('<', '>'):
+			# TODO: review - does this work correctly with new octave +1 encoding?
 			if current_char == '<':
 				octave_nibble = octave - 1
 			else:
@@ -509,7 +530,8 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 			# TODO: verify octave range
 
 			# squash the command and value to a single byte and output
-			output_byte = (command_lookup['o'] << 4) | octave_nibble - 1
+			# TODO: review - changed from octave_nibble - 1 to octave_nibble + 1 for new encoding
+			output_byte = (command_lookup['o'] << 4) | (octave_nibble + 1)
 			output_bytecode.append(output_byte)
 
 			index += 1

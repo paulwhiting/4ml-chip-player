@@ -40,6 +40,7 @@ class NoteEvent:
 	tempo: int
 	instrument: int
 	note: str  # e.g. 'c', 'c+', 'd', ...
+	percussion: bool = False
 
 	def pitch_key(self):
 		"""Unique key for pitch (octave + semitone)."""
@@ -47,7 +48,7 @@ class NoteEvent:
 
 	def duplicate_key(self):
 		"""Key for duplicate detection: same start, duration, pitch."""
-		return (self.start_128, self.dur_128, self.pitch_key(), self.instrument)
+		return (self.start_128, self.dur_128, self.pitch_key(), self.instrument, self.percussion)
 
 
 def log(msg: str) -> None:
@@ -132,10 +133,20 @@ def parse_sequence_to_events(seq: str) -> list[NoteEvent]:
 	volume = None
 	tempo = None
 	instrument = None
+	percussion = False
 
 	tokens = tokenize(seq)
 
 	for token in tokens:
+
+		# handle percussion toggle commands
+		if token[0] == 'x':
+			if len(token) > 1 and token[1:] in ('0', '-'):
+				percussion = False
+			else:
+				# x, x1, x+ all turn percussion on
+				percussion = True
+			continue
 
 		# support previous duration
 		result = process_mmml_string(token, previous_duration=prev_duration, octave=octave, volume=volume, tempo=tempo, instrument=instrument)
@@ -161,7 +172,8 @@ def parse_sequence_to_events(seq: str) -> list[NoteEvent]:
 				volume=volume,
 				note=token,
 				tempo=tempo,
-				instrument=instrument
+				instrument=instrument,
+				percussion=percussion
 			))
 			tick += duration
 			continue
@@ -187,27 +199,26 @@ def pack_into_channels(notes: list[NoteEvent]) -> list[list[NoteEvent]]:
 	if not notes:
 		return []
 	sorted_notes = sorted(notes, key=lambda n: (n.start_128, n.duplicate_key()))
-	#channels: list[list[NoteEvent]] = []
-	#channel_end: list[int] = []
 
-	# for now, have a separate channel per instrument
-	instrument_channels = defaultdict(list[list[NoteEvent]])
-	instrument_channel_end = defaultdict(list[list[NoteEvent]])
+	# group by (instrument, percussion) - percussion stays separate from melody
+	group_channels = defaultdict(list[list[NoteEvent]])
+	group_channel_end = defaultdict(list[int])
 
 
 	for n in sorted_notes:
+		key = (n.instrument, n.percussion)
 		assigned = False
-		for ch in range(len(instrument_channels[n.instrument])):
-			if instrument_channel_end[n.instrument][ch] <= n.start_128:
-				instrument_channels[n.instrument][ch].append(n)
-				instrument_channel_end[n.instrument][ch] = n.start_128 + n.dur_128
+		for ch in range(len(group_channels[key])):
+			if group_channel_end[key][ch] <= n.start_128:
+				group_channels[key][ch].append(n)
+				group_channel_end[key][ch] = n.start_128 + n.dur_128
 				assigned = True
 				break
 		if not assigned:
-			instrument_channels[n.instrument].append([n])
-			instrument_channel_end[n.instrument].append(n.start_128 + n.dur_128)
+			group_channels[key].append([n])
+			group_channel_end[key].append(n.start_128 + n.dur_128)
 
-	return [channel for instrument_channel in instrument_channels.values() for channel in instrument_channel]
+	return [channel for group in group_channels.values() for channel in group]
 
 
 def is_rest_only_or_empty(events: list[NoteEvent]) -> bool:
@@ -242,6 +253,7 @@ def events_to_4ml_channel(events: list[NoteEvent]) -> str:
 	# TODO: tempo is a global value, not separate per channel like we do here
 	tempo = DEFAULT_TEMPO
 	instrument = DEFAULT_INSTRUMENT
+	percussion = False
 	for n in sorted(events, key=lambda e: e.start_128):
 		if n.start_128 > cur_tick:
 			d = decompose_notes(n.start_128 - cur_tick)
@@ -259,6 +271,9 @@ def events_to_4ml_channel(events: list[NoteEvent]) -> str:
 		if n.instrument != instrument:
 			parts.append(f"@{n.instrument}")
 			instrument = n.instrument
+		if n.percussion != percussion:
+			parts.append('x' if n.percussion else 'x0')
+			percussion = n.percussion
 		parts.append(n.note)
 		cur_tick = n.start_128 + n.dur_128
 	return " ".join(parts)

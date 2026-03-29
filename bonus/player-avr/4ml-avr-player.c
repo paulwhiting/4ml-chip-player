@@ -67,12 +67,13 @@
 // throw a compile-time error if the 4ML data isn't AVR compatible
 
 // note table (plus an initial 'wasted' entry for rests)
+// divided by 4 to allow octave -1 to 14 (with new bytecode encoding: octave + 1)
 const uint16_t note[13] /*PROGMEM*/ = 
 {
 	// the rest command is technically note 0 and thus requires a frequency 
 	255,
-	// one octave of notes, equal temperament in Gb
-	1024,967,912,861,813,767,724,683,645,609,575,542
+	// one octave of notes, equal temperament in Gb (divided by 4)
+	256,241,228,215,203,191,181,170,161,152,143,135
 };
 
 // location of individual samples in sample array
