@@ -67,6 +67,11 @@ SUB_CHANNELS = True
 # set this to 1 to enable velocity conversion
 velocity_print = 1
 
+# percussion detection (MIDI channel 9, notes 35-81)
+GM_PERCUSSION_CHANNEL = 9
+PERCUSSION_NOTE_MIN = 35
+PERCUSSION_NOTE_MAX = 81
+
 # set this to 1 to hide durations on repeat
 duration_repeat = 0
 
@@ -171,6 +176,9 @@ def process_midi_file(midi_file_path):
 	active_notes = {}
 	last_note_off_time = {}
 
+	# dictionary to track which channels are percussion
+	percussion_channels = {}
+
 	if debug:
 		print(f'ticks_per_beat: {midi_file.ticks_per_beat}')
 
@@ -201,6 +209,12 @@ def process_midi_file(midi_file_path):
 						#print(f'Preventing Concern: {the_channel} in {active_notes}\n',file=sys.stderr)
 						sub_channel += 1
 						the_channel = f'{orig_channel}-{sub_channel}'
+
+				# detect percussion: MIDI channel 9 with note in range 35-81
+				is_percussion = (msg.channel == GM_PERCUSSION_CHANNEL and 
+								 PERCUSSION_NOTE_MIN <= msg.note <= PERCUSSION_NOTE_MAX)
+				if is_percussion:
+					percussion_channels[orig_channel] = True
 
 				if the_channel in active_notes:
 					print(f'Concern: {the_channel} in {active_notes}\n',file=sys.stderr)
@@ -317,8 +331,16 @@ def process_midi_file(midi_file_path):
 
 			if previous_channel != mml_channel:
 				total_channels	 += 1
+				# get the base MIDI channel number (handle sub-channels like "9-1" -> 9)
+				base_channel = int(mml_channel.split('-')[0])
 				channel_data = f'\n\n; {mml_channel} {mml_track_name}\n'
-				channel_data += f'{bcolors.WARNING}C{total_channels} {bcolors.ENDC}'
+				
+				# add x command if this is a percussion channel
+				x_prefix = ''
+				if base_channel in percussion_channels:
+					x_prefix = f'{bcolors.OKCYAN}x{bcolors.ENDC}'
+				
+				channel_data += f'{bcolors.WARNING}C{base_channel} {x_prefix}{bcolors.ENDC}'
 
 				# reset everything for new channel
 				previous_duration = 0
