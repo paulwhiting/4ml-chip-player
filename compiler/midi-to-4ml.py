@@ -335,6 +335,8 @@ def process_midi_file(midi_file_path):
 				channel_data += f'{bcolors.WARNING}C{total_channels} {bcolors.ENDC}'
 				
 				# add x command if this is a percussion channel
+				# get the base MIDI channel number (handle sub-channels like "9-1" -> 9)
+				base_channel = int(mml_channel.split('-')[0])
 				if base_channel in percussion_channels:
 					channel_data += f'x'
 
