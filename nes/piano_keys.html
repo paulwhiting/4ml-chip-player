@@ -226,7 +226,6 @@
     .recordings-toolbar { margin-bottom: 0.5rem; display: flex; align-items: center; gap: 0.5rem; }
     .upload-label { cursor: pointer; }
     .btn-download-icon { display: inline-block; width: 1em; height: 1em; vertical-align: -0.15em; }
-    .recording-item .btn-4ml { display: none; }
     .upload-btn {
       display: inline-block;
       font-family: inherit;
@@ -1774,18 +1773,11 @@
     };
     row.appendChild(playBtn);
     const dl4mlBtn = document.createElement('button');
-    dl4mlBtn.className = 'btn-4ml';
-    dl4mlBtn.textContent = '4ML';
     dl4mlBtn.type = 'button';
     dl4mlBtn.title = 'Download as 4ML';
+    dl4mlBtn.innerHTML = '<svg class="btn-download-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
     dl4mlBtn.onclick = (e) => { e.stopPropagation(); download4ML(rec); };
     row.appendChild(dl4mlBtn);
-    const dlExactBtn = document.createElement('button');
-    dlExactBtn.type = 'button';
-    dlExactBtn.title = 'Download as JSON';
-    dlExactBtn.innerHTML = '<svg class="btn-download-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-    dlExactBtn.onclick = (e) => { e.stopPropagation(); downloadExact(rec); };
-    row.appendChild(dlExactBtn);
     const delBtn = document.createElement('button');
     delBtn.textContent = 'Delete';
     delBtn.type = 'button';
@@ -1972,18 +1964,11 @@
       };
       row.appendChild(playBtn);
       const dl4mlBtn = document.createElement('button');
-      dl4mlBtn.className = 'btn-4ml';
-      dl4mlBtn.textContent = '4ML';
       dl4mlBtn.type = 'button';
       dl4mlBtn.title = 'Download as 4ML';
+      dl4mlBtn.innerHTML = '<svg class="btn-download-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
       dl4mlBtn.onclick = (e) => { e.stopPropagation(); download4ML(rec); };
       row.appendChild(dl4mlBtn);
-      const dlExactBtn = document.createElement('button');
-      dlExactBtn.type = 'button';
-      dlExactBtn.title = 'Download as JSON';
-      dlExactBtn.innerHTML = '<svg class="btn-download-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-      dlExactBtn.onclick = (e) => { e.stopPropagation(); downloadExact(rec); };
-      row.appendChild(dlExactBtn);
       const delBtn = document.createElement('button');
       delBtn.textContent = 'Delete';
       delBtn.type = 'button';
