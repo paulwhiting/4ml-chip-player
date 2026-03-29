@@ -59,6 +59,8 @@
 #define CMD_FN_INSTRUMENT 5
 #define CMD_FN_TIE        6
 #define CMD_FN_PAN        7
+#define CMD_FN_PERCUSSION 8
+#define CMD_FN_PERCUSSION_OFF 9
 #define CMD_FN_MISC       14
 #define CMD_FN_END        15
 
@@ -133,7 +135,7 @@ uint8_t  out              [MAX_VOICES],
 		 length           [MAX_VOICES],
 		 volume           [MAX_VOICES],
 		 loops_active     [MAX_VOICES],
-		 instrument       [MAX_VOICES];
+		 is_percussion    [MAX_VOICES];
 
 uint16_t data_pointer     [MAX_VOICES],
 		 waveform         [MAX_VOICES],
@@ -182,15 +184,14 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 		data_pointer[i] = pgm_read_byte(_4ml_data + ((i*2)+song_idx));
 		data_pointer[i] = data_pointer[i] << 8;
 		data_pointer[i] = data_pointer[i] | pgm_read_byte(&_4ml_data[(i*2)+1+song_idx]);
-		//data_pointer[i] = pgm_read_word(&_4ml_data[(i*2)]);
 
-		frequency[i]    = 255; // random frequency (won't ever be sounded)
-		volume[i]       = 1;
-		octave[i]       = 3;   // default octave : o3
-		instrument[i]   = 0;   // default instrument (not percussion)
-		out[i]          = 0;
-		length[i]       = 0;
-		loops_active[i] = 0;
+		frequency[i]       = 255; // random frequency (won't ever be sounded)
+		volume[i]          = 1;
+		octave[i]          = 3;   // default octave : o3
+		is_percussion[i]   = 0;   // default: not percussion
+		out[i]             = 0;
+		length[i]          = 0;
+		loops_active[i]    = 0;
 
 		waveform[i]      = 0;
 		pitch_counter[i] = 0;
@@ -212,7 +213,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 
         /* One branch per voice: out = (pitch_counter < waveform) ? high : 0 */
         for(uint8_t voice = 0; voice < song_voices; voice++) {
-			if (instrument[voice] == 0) {
+			if (is_percussion[voice] == 0) {
 				PORTB = out[voice];
 				pitch_counter[voice] += octave[voice];
 				if(pitch_counter[voice] >= frequency[voice])
@@ -352,6 +353,16 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 							data_pointer[voice] += 2; // skip data
 						}
 
+						// percussion on (x command)
+						else if(buffer2 == CMD_FN_PERCUSSION) {
+							is_percussion[voice] = 1;
+						}
+
+						// percussion off (x0 command)
+						else if(buffer2 == CMD_FN_PERCUSSION_OFF) {
+							is_percussion[voice] = 0;
+						}
+
 						// expanded functionality command (currently unused)
 						else if(buffer2 == CMD_FN_MISC) {
 							data_pointer[voice] += 2; // skip data
@@ -406,7 +417,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 					// note value
 					if(buffer1 != CMD_REST && buffer1 < CMD_OCTAVE)
 					{
-						if (instrument[voice] == 0) {
+						if (is_percussion[voice] == 0) {
 							//buffer4 = pgm_read_word(&note[buffer1]);
 							buffer4 = note[buffer1];
 							frequency[voice] = buffer4;

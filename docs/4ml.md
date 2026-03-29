@@ -79,8 +79,18 @@ Note, where other MML engines have been listed in the 'Also defined in' column, 
 
 **Symbol:**      `@<0-255>`\
 **Description:** Instrument\
-**Notes:** \
+**Notes:**       Selects an instrument from the instrument bank. The interpretation of this command varies by player implementation.\
 **Also in:**     PPMCK, MGSC, XPMCK
+
+**Symbol:**      `x`, `x+`, or `x1`\
+**Description:** Percussion On\
+**Notes:**       Enables percussion mode for the channel. In percussion mode, notes are interpreted as drum sounds rather than pitched notes. Can be used with `x0` or `x-` to toggle between percussion and melody within the same channel.\
+**Also in:**     (new 4ML command)
+
+**Symbol:**      `x0` or `x-`\
+**Description:** Percussion Off\
+**Notes:**       Disables percussion mode for the channel, returning to normal melodic instrument playback.\
+**Also in:**     (new 4ML command)
 
 **Symbol:**      `K<0-255>`\
 **Description:** Transpose\
@@ -121,8 +131,8 @@ Command Reference
 | @    | 0101   | 5   | yes        | instrument          |
 | &    | 0110   | 6   | no         | tie                 |
 | s    | 0111   | 7   | yes        | stereo (panning)    |
-|      | 1000   | 8   |            |                     |
-|      | 1001   | 9   |            |                     |
+| x    | 1000   | 8   | no         | percussion on       |
+| x0   | 1001   | 9   | no         | percussion off      |
 |      | 1010   | A   |            |                     |
 |      | 1011   | B   |            |                     |
 |      | 1100   | C   |            |                     |

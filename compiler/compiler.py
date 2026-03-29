@@ -218,7 +218,7 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 		'r': 0x00, 'c': 0x01, 'c+':0x02, 'd': 0x03, 'd+':0x04, 'e': 0x05, 'e+':0x06, 'f': 0x06,
 		'f+':0x07, 'g': 0x08, 'g+':0x09, 'a': 0x0A, 'a+':0x0B, 'b': 0x0C, 'b+':0x01, 'o': 0x0D,
 		'v': 0x0E, 'p': 0xF2, 't': 0xF3, '@': 0xF5, 'i': 0xF5, '[': 0xF0, ']': 0xF1, '&': 0xF6,
-		'^': 0xF6, 'K': 0xF4, 's': 0xF7, 'F': 0xFE
+		'^': 0xF6, 'K': 0xF4, 's': 0xF7, 'F': 0xFE, 'x': 0xF8
 	}
 
 	duration_lookup = {
@@ -529,6 +529,19 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 				output_bytecode.append(output_byte)
 
 			index += 1
+
+		# process percussion commands: x (on), x+ (on), x1 (on), x0 (off), x- (off)
+		elif current_char == 'x':
+			index += 1
+			# check for modifiers
+			if index < len(input_string) and input_string[index] in ('0', '-'):
+				# percussion off: 0xF9
+				output_bytecode.append(0xF9)
+				index += 1
+			else:
+				# percussion on: 0xF8
+				# handles x, x+, x1
+				output_bytecode.append(0xF8)
 
 		# move to the next character
 		else:
