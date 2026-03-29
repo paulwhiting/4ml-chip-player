@@ -136,7 +136,8 @@ uint8_t  out              [MAX_VOICES],
 		 length           [MAX_VOICES],
 		 volume           [MAX_VOICES],
 		 loops_active     [MAX_VOICES],
-		 is_percussion    [MAX_VOICES];
+		 is_percussion    [MAX_VOICES],
+		 instrument       [MAX_VOICES];
 
 uint16_t data_pointer     [MAX_VOICES],
 		 waveform         [MAX_VOICES],
