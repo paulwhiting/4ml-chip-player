@@ -331,16 +331,12 @@ def process_midi_file(midi_file_path):
 
 			if previous_channel != mml_channel:
 				total_channels	 += 1
-				# get the base MIDI channel number (handle sub-channels like "9-1" -> 9)
-				base_channel = int(mml_channel.split('-')[0])
 				channel_data = f'\n\n; {mml_channel} {mml_track_name}\n'
+				channel_data += f'{bcolors.WARNING}C{total_channels} {bcolors.ENDC}'
 				
 				# add x command if this is a percussion channel
-				x_prefix = ''
 				if base_channel in percussion_channels:
-					x_prefix = f'{bcolors.OKCYAN}x{bcolors.ENDC}'
-				
-				channel_data += f'{bcolors.WARNING}C{base_channel} {x_prefix}{bcolors.ENDC}'
+					channel_data += f'x'
 
 				# reset everything for new channel
 				previous_duration = 0
