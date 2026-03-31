@@ -194,10 +194,10 @@ def collect_all_notes(channel_events: list[list[NoteEvent]]) -> list[NoteEvent]:
 	return out
 
 
-def pack_into_channels(notes: list[NoteEvent]) -> list[list[NoteEvent]]:
-	"""Sort by start, assign each note to first free channel. Returns list of channels."""
+def pack_into_channels(notes: list[NoteEvent]) -> tuple[list[list[NoteEvent]], int]:
+	"""Sort by start, assign each note to first free channel. Returns (channels, max_length)."""
 	if not notes:
-		return []
+		return ([], 0)
 	sorted_notes = sorted(notes, key=lambda n: (n.start_128, n.duplicate_key()))
 
 	# group by (instrument, percussion) - percussion stays separate from melody
@@ -218,7 +218,9 @@ def pack_into_channels(notes: list[NoteEvent]) -> list[list[NoteEvent]]:
 			group_channels[key].append([n])
 			group_channel_end[key].append(n.start_128 + n.dur_128)
 
-	return [channel for group in group_channels.values() for channel in group]
+	max_length = max(end for ends in group_channel_end.values() for end in ends)
+
+	return ([channel for group in group_channels.values() for channel in group], max_length)
 
 
 def is_rest_only_or_empty(events: list[NoteEvent]) -> bool:
@@ -242,7 +244,7 @@ def ticks_to_duration_str(tick: int) -> str:
 	return "8"
 
 
-def events_to_4ml_channel(events: list[NoteEvent]) -> str:
+def events_to_4ml_channel(events: list[NoteEvent], target_length: Optional[int] = None) -> str:
 	"""Serialize one channel's events to 4ML string (with rests for gaps)."""
 	if not events:
 		return f"r1"
@@ -276,6 +278,12 @@ def events_to_4ml_channel(events: list[NoteEvent]) -> str:
 			percussion = n.percussion
 		parts.append(n.note)
 		cur_tick = n.start_128 + n.dur_128
+
+	# Pad to target length if specified
+	if target_length is not None and cur_tick < target_length:
+		d = decompose_notes(target_length - cur_tick)
+		parts.append('r' + 'r'.join(d))
+
 	return " ".join(parts)
 
 
@@ -305,7 +313,7 @@ def main() -> None:
 		channel_events.append(events)
 
 	all_notes = collect_all_notes(channel_events)
-	packed = pack_into_channels(all_notes)
+	packed, max_length = pack_into_channels(all_notes)
 	# Drop empty channels (we already only pack note-bearing channels)
 	packed = [ch for ch in packed if not is_rest_only_or_empty(ch)]
 	total_output_channels = len(packed)
@@ -315,9 +323,8 @@ def main() -> None:
 	channels_saved = total_input_channels - total_output_channels
 
 	# Output reduced 4ML to stdout
-	tempo = 50
 	for i, ch_events in enumerate(packed):
-		print(f"C{i + 1} {events_to_4ml_channel(ch_events)}")
+		print(f"C{i + 1} {events_to_4ml_channel(ch_events, max_length)}")
 	if not packed:
 		print("C1 r1")
 
