@@ -66,14 +66,13 @@
 
 // throw a compile-time error if the 4ML data isn't AVR compatible
 
-// note table (plus an initial 'wasted' entry for rests)
-// divided by 4 to allow octave -1 to 14 (with new bytecode encoding: octave + 1)
+// note table (times 4 to compensate for octave nibble+1 encoding)
 const uint16_t note[13] /*PROGMEM*/ = 
 {
 	// the rest command is technically note 0 and thus requires a frequency 
 	255,
-	// one octave of notes, equal temperament in Gb (divided by 4)
-	256,241,228,215,203,191,181,170,161,152,143,135
+	// one octave of notes, equal temperament in Gb (multiplied by 4)
+	4096,3868,3648,3444,3252,3068,2896,2732,2580,2436,2300,2168
 };
 
 // location of individual samples in sample array
@@ -358,11 +357,13 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 						// percussion on (x command)
 						else if(buffer2 == CMD_FN_PERCUSSION) {
 							is_percussion[voice] = 1;
+							data_pointer[voice]++;
 						}
 
 						// percussion off (x0 command)
 						else if(buffer2 == CMD_FN_PERCUSSION_OFF) {
 							is_percussion[voice] = 0;
+							data_pointer[voice]++;
 						}
 
 						// expanded functionality command (currently unused)
