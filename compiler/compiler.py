@@ -38,6 +38,11 @@ import sys
 import re
 import struct
 
+from exceptions import (
+    CompilerError, FileError, LimitError, SyntaxError, CompilerValueError,
+    CompilerWarning, handle_error, handle_warning
+)
+
 #################
 # global values #
 #################
@@ -175,7 +180,7 @@ def write_mmml_body(byte_array_list, output_file):
 
 			# check if the number is within the valid range (0-255)
 			if num < 0 or num > 255:
-				throw_error(9,num,0)
+				raise CompilerValueError(f"Invalid value on export: {num}. Each element should be a single byte (0-255).")
 			else:
 				# convert the integer to a single byte using struct.pack
 				hex_byte = struct.pack('B', num)
@@ -292,12 +297,12 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 
 			# check if in bounds
 			if duration_nibble > 16 or duration_nibble < 0:
-				throw_error(5, current_char, note_duration)
+				raise CompilerValueError(f"Note '{current_char}{note_duration}' is an invalid duration.")
 
 			# Collapse tied/successive same-note durations into minimal byte sequence
 			# base duration in 128th-note units
 			if note_duration not in duration_to_128th:
-				throw_error(5, current_char, note_duration)
+				raise CompilerValueError(f"Note '{current_char}{note_duration}' is an invalid duration.")
 			total_128 = duration_to_128th[note_duration]
 			base_letter = current_char[0]
 
@@ -347,7 +352,7 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 					note_duration = previous_duration
 
 				if note_duration not in duration_to_128th:
-					throw_error(5, current_char, note_duration)
+					raise CompilerValueError(f"Note '{current_char}{note_duration}' is an invalid duration.")
 
 				total_128 += duration_to_128th[note_duration]
 				scan_index = tmp2
@@ -410,7 +415,7 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 
 			# you've got to have a value with it!
 			if not function_value or function_value == '-':
-				throw_error(3,current_char,0)
+				raise CompilerValueError(f"Command '{current_char}' must have a value.")
 
 			# if it's an octave, store the value for the '<' and '>' commands
 			if current_char == 'o':
@@ -424,10 +429,10 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 			# octave: -1 to 14, volume: 1 to 16
 			if current_char == 'o':
 				if function_nibble > 14 or function_nibble < -1:
-					throw_error(4, current_char, function_nibble)
+					raise CompilerValueError(f"Command '{current_char}' is {function_nibble}, must be -1 - 14.")
 			elif current_char == 'v':
 				if function_nibble > 16 or function_nibble < 1:
-					throw_error(4, current_char, function_nibble)
+					raise CompilerValueError(f"Command '{current_char}' is {function_nibble}, must be -1 - 14.")
 
 			# volume-specific conditions
 			if current_char == 'v':
@@ -470,11 +475,11 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 
 			# check if it's a valid negative value
 			if is_negative and not function_value:
-				throw_error(3, current_char, 0)
+				raise CompilerValueError(f"Command '{current_char}' must have a value.")
 
 			# you've got to have a value with it!
 			if not function_value:
-				throw_error(3, current_char, 0)
+				raise CompilerValueError(f"Command '{current_char}' must have a value.")
 
 			# convert to byte code
 			command_byte = command_lookup[current_char]
@@ -493,23 +498,23 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 			# transpose and panning can be negative (-100 to 100)
 			if current_char in ('K', 's'):
 				if function_byte > 100 or function_byte < -100 :
-					throw_error(12, current_char, function_byte)
+					raise CompilerValueError(f"Command '{current_char}' is {function_byte}, must be -100 - 100.")
 				else:
 					function_byte += 100 + 1
 			# other values cannot be negative
 			elif function_byte < 0:
-				throw_error(8, current_char, function_byte)
+				raise CompilerValueError(f"Command '{current_char}' is {function_byte}, must be 1 - 256.")
 
 			# let's start a loop to see if it'll end
 			if current_char == '[':
 				matching_loop += 1
 				if abs(function_byte) < 2:
-					throw_error(10, current_char, function_value)
+					raise CompilerValueError(f"Command '{current_char}' must have a value.")
 				function_byte += 1
 
 			# check if the function value is out of bounds
 			if function_byte > 256 or function_byte < -256:
-				throw_error(8, current_char, function_value)
+				raise CompilerValueError(f"Command '{current_char}' is {function_value}, must be 1 - 256.")
 
 			# add to data array
 			output_bytecode.append(command_byte)
@@ -568,14 +573,14 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 		# move to the next character
 		else:
 			if current_char != ' ':
-				throw_warning(1,current_char)
+				raise CompilerWarning(f"Skipped unexpected symbol '{current_char}'.")
 			index += 1
 
 	# just double check that the loop commands match up
 	if matching_loop > 0:
-		throw_error(6,0,0)
+		raise SyntaxError("A loop has been opened but is missing a corresponding close event (']').")
 	elif matching_loop < 0:
-		throw_error(7,0,0)
+		raise LimitError("There are too many closed loop commands (']').")
 
 	if output_end_channel_byte:
 		# end the sequence with a secret channel/pattern end event
@@ -598,9 +603,7 @@ def parse_4ml_file(input_file):
 		with open(input_file, "r") as f:
 			s = f.read()
 	except FileNotFoundError:
-		log(f"File not found: {path}")
-		sys.exit(1)
-		s = f.read()
+		raise FileError(f"File not found: {input_file}")
 
 	# remove comments
 	s = re.sub(r";.*?(?=\n|$)", "\n", s)
@@ -686,6 +689,7 @@ def process_file(input_file):
 def main():
 	print(f"\nHello! Welcome to the Mega Micro Music Macro Language (4ML) compiler!\n", file=sys.stderr)
 
+	target_platform = 'GB'  # default
 	if '--avr' in sys.argv:
 		target_platform = 'AVR'
 		sys.argv.remove('--avr')
@@ -695,51 +699,59 @@ def main():
 		print("to run use: python compiler.py <filename> (<filename> ...)", file=sys.stderr)
 		sys.exit()
 
-	files = sys.argv[1:]
+	try:
+		files = sys.argv[1:]
 
-	album = []
+		album = []
 
-	for file in files:
-		album.append(process_file(file))
+		for file in files:
+			album.append(process_file(file))
 
-	print(f"{bcolors.OKBLUE}\nWriting to output file...{bcolors.ENDC}", file=sys.stderr)
+		print(f"{bcolors.OKBLUE}\nWriting to output file...{bcolors.ENDC}", file=sys.stderr)
 
-	# write to output file
+		# write to output file
 
-	print("\n/*\n\ttrack list:")
-	for track in album:
-		hlen = 2*len(track['header'])
-		dlen = sum([len(t) for t in track['data']])
-		print(f"\t {hlen} + {dlen} = {hlen+dlen} bytes - {track['file']}")
-	print("*/\n")
+		print("\n/*\n\ttrack list:")
+		for track in album:
+			hlen = 2*len(track['header'])
+			dlen = sum([len(t) for t in track['data']])
+			print(f"\t {hlen} + {dlen} = {hlen+dlen} bytes - {track['file']}")
+		print("*/\n")
 
-	print(f"#define TOTAL_TRACKS {len(album)}")
-	print(f'const uint8_t TRACK_VOICES[] = {{{", ".join([str(track['channels']) for track in album])}}};')
-	print(f'const uint16_t TRACK_OFFSET[] = {{{", ".join([str(track["offset"]) for track in album])}}};\n')
+		print(f"#define TOTAL_TRACKS {len(album)}")
+		print(f'const uint8_t TRACK_VOICES[] = {{{", ".join([str(track["channels"]) for track in album])}}};')
+		print(f'const uint16_t TRACK_OFFSET[] = {{{", ".join([str(track["offset"]) for track in album])}}};\n')
 
-	album_max_channels = max(track["channels"] for track in album)
-	print(f"#define MAX_VOICES {album_max_channels}")
+		album_max_channels = max(track["channels"] for track in album)
+		print(f"#define MAX_VOICES {album_max_channels}")
 
-	# if it's AVR, we'll need to store it in program memory
-	if target_platform == 'AVR':
-		print("const unsigned char _4ml_data[] PROGMEM = {")
-	else:
-		print("const unsigned char _4ml_data[] = {")
+		# if it's AVR, we'll need to store it in program memory
+		if target_platform == 'AVR':
+			print("const unsigned char _4ml_data[] PROGMEM = {")
+		else:
+			print("const unsigned char _4ml_data[] = {")
 
-	for track in album:
-		print(f"\n\t// {track['file']}")
-		print("\n\t// header")
-		write_mmml_header(track["header"], sys.stdout)
-		print("\n\n\t// data")
-		write_mmml_body  (track["data"], sys.stdout)
+		for track in album:
+			print(f"\n\t// {track['file']}")
+			print("\n\t// header")
+			write_mmml_header(track["header"], sys.stdout)
+			print("\n\n\t// data")
+			write_mmml_body  (track["data"], sys.stdout)
 
-	print("\n};")
+		print("\n};")
 
 
-	print(f"\nFinished! Total size {total_size} bytes.", file=sys.stderr)
+		print(f"\nFinished! Total size {total_size} bytes.", file=sys.stderr)
 
-	# let's wrap up
-	print(f"{bcolors.OKGREEN}\nCompilation complete!\n{bcolors.ENDC}", file=sys.stderr)
+		# let's wrap up
+		print(f"{bcolors.OKGREEN}\nCompilation complete!\n{bcolors.ENDC}", file=sys.stderr)
+
+	except CompilerError as e:
+		handle_error(e)
+	except CompilerWarning as w:
+		handle_warning(w)
+	except FileNotFoundError as e:
+		handle_error(FileError(str(e)))
 
 if __name__ == "__main__":
 	main()

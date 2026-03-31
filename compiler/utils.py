@@ -2,6 +2,11 @@ import sys
 import re
 from typing import Optional
 
+from exceptions import (
+    CompilerError, FileError, LimitError, SyntaxError, CompilerValueError,
+    CompilerWarning, handle_error, handle_warning
+)
+
 def log(msg: str) -> None:
 	print(msg, file=sys.stderr)
 
@@ -94,12 +99,12 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 
 			# check if in bounds
 			if duration_nibble > 16 or duration_nibble < 0:
-				throw_error(5, current_char, note_duration)
+				raise CompilerValueError(f"Note '{current_char}{note_duration}' is an invalid duration.")
 
 			# Collapse tied/successive same-note durations into minimal byte sequence
 			# base duration in 128th-note units
 			if note_duration not in duration_to_128th:
-				throw_error(5, current_char, note_duration)
+				raise CompilerValueError(f"Note '{current_char}{note_duration}' is an invalid duration.")
 			total_128 = duration_to_128th[note_duration]
 			base_letter = current_char[0]
 
@@ -175,11 +180,11 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 
 			# check if it's a valid negative value
 			if is_negative and not function_value:
-				throw_error(3, current_char, 0)
+				raise CompilerValueError(f"Command '{current_char}' must have a value.")
 
 			# you've got to have a value with it!
 			if not function_value or function_value == '-':
-				throw_error(3,current_char,0)
+				raise CompilerValueError(f"Command '{current_char}' must have a value.")
 
 			# if it's an octave, store the value for the '<' and '>' commands
 			if current_char == 'o':
@@ -193,10 +198,10 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 			# octave: -1 to 14, volume: 1 to 16
 			if current_char == 'o':
 				if function_nibble > 14 or function_nibble < -1:
-					throw_error(4, current_char, function_nibble)
+					raise CompilerValueError(f"Command '{current_char}' is {function_nibble}, must be 1 - 16.")
 			elif current_char == 'v':
 				if function_nibble > 16 or function_nibble < 1:
-					throw_error(4, current_char, function_nibble)
+					raise CompilerValueError(f"Command '{current_char}' is {function_nibble}, must be 1 - 16.")
 
 			# squash the command and value to a single byte and output
 			# octave uses +1 encoding (new), volume uses -1 encoding (old)
@@ -227,11 +232,11 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 
 			# check if it's a valid negative value
 			if is_negative and not function_value:
-				throw_error(3, current_char, 0)
+				raise CompilerValueError(f"Command '{current_char}' must have a value.")
 
 			# you've got to have a value with it!
 			if not function_value:
-				throw_error(3, current_char, 0)
+				raise CompilerValueError(f"Command '{current_char}' must have a value.")
 
 			# convert to byte code
 			command_byte = command_lookup[current_char]
@@ -296,7 +301,7 @@ def process_mmml_string(input_string, output_end_channel_byte = True):
 		# move to the next character
 		else:
 			if current_char != ' ':
-				throw_warning(1,current_char)
+				raise CompilerWarning(f"Unknown command '{current_char}', ignoring.")
 			index += 1
 
 	return {'bytes': output_bytecode}
