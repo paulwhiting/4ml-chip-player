@@ -417,6 +417,9 @@ def tokenize(s: str) -> list[str]:
 		if c == "o":
 			tok = "o"
 			i += 1
+			if i < len(s) and s[i] == '-':
+				tok += s[i]
+				i += 1
 			while i < len(s) and s[i].isdigit():
 				tok += s[i]
 				i += 1
