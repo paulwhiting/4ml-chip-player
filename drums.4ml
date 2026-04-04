@@ -1,4 +1,2 @@
-C1 x c2 c+ d d+ e f f+ g r r
-C2      r2 r  r r  r r r  r c r
-C3 r1
-C4 r2
+C1 c x c2 c+ d d+ e f f+ g r r
+C2 c    d e  f a  b c r2 r  r r  r r r  r c r

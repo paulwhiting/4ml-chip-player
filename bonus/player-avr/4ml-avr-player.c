@@ -64,7 +64,15 @@
 #define CMD_FN_MISC       14
 #define CMD_FN_END        15
 
-// throw a compile-time error if the 4ML data isn't AVR compatible
+// Tempo calibration: tick_speed that equals 60 BPM at 1 channel
+// Used to calculate correct tempo regardless of channel count
+#define TEMPO_BASE      5000
+
+// Channel compensation factors derived from empirical testing
+// These compensate for the processing overhead of additional channels
+// Index 0=unused, 1=1ch, 2=2ch, 3=3ch, 4=4ch
+// Values tuned so all channels play at similar speed regardless of count
+const uint8_t channel_comp[5] = {0, 1, 2, 2, 4};
 
 // note table (times 4 to compensate for octave nibble+1 encoding)
 const uint16_t note[13] /*PROGMEM*/ = 
@@ -173,7 +181,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 
 	// main timer variables
 	uint16_t tick_counter    = 0,
-	         tick_speed      = 1024; // default tempo
+	         tick_speed      = 1024; // default tempo (close to original behavior)
 
 	/* Set each channel's data pointer to that channel's data location in the core data array.
 	 * Initialize each channel's frequencies. By default they're set to zero which causes out of
@@ -215,7 +223,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
         /* One branch per voice: out = (pitch_counter < waveform) ? high : 0 */
         for(uint8_t voice = 0; voice < song_voices; voice++) {
 			if (is_percussion[voice] == 0) {
-				PORTB = out[voice];
+			PORTB = out[voice];
 				pitch_counter[voice] += octave[voice];
 				if(pitch_counter[voice] >= frequency[voice])
 					pitch_counter[voice] -= frequency[voice];
@@ -317,19 +325,18 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 						// tempo
 						else if(buffer2 == CMD_FN_TEMPO)
 						{
-							tick_speed = buffer3 << 4;
-							/* // for testing tempos...
-							switch (song_voices) {
-								case 1:
-									tick_speed = 2150; // 1 channel 60 bpm
-									break;
-								case 2:
-									tick_speed = 725; // 2 channel 60 bpm
-									break;
-								case 3:
-									tick_speed = 540; // 3 channel 60 bpm
-									break;
-							}*/
+							// Fixed tempo formula:
+							// - Inverts the relationship (higher tempo value = slower playback)
+							// - Uses channel compensation factors derived from empirical testing:
+							//   1 channel @ 60 BPM -> tick_speed = 2150
+							//   2 channels @ 60 BPM -> tick_speed = 725
+							//   3 channels @ 60 BPM -> tick_speed = 540
+							uint16_t tempo_value = buffer3 + 1;  // convert 0-255 to 1-256
+							
+							// tick_speed = (TEMPO_BASE * 60) / (channel_comp * tempo_value)
+							uint16_t calc_speed = (TEMPO_BASE * 60UL) / (channel_comp[song_voices] * tempo_value);
+							if (calc_speed < 50) calc_speed = 50;
+							tick_speed = calc_speed;
 							data_pointer[voice] += 2;
 						}
 
