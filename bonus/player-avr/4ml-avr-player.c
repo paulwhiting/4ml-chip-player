@@ -29,6 +29,7 @@
 
 #include <avr/io.h>         // core avr functionality
 #include <avr/pgmspace.h>   // * * *
+#include <avr/interrupt.h>  // interrupt handling
 #include <util/delay.h>
 
 #include "4ml-data.h"       // holds the _4ml_data[] arrays
@@ -67,12 +68,6 @@
 // Tempo calibration: tick_speed that equals 60 BPM at 1 channel
 // Used to calculate correct tempo regardless of channel count
 #define TEMPO_BASE      5000
-
-// Channel compensation factors derived from empirical testing
-// These compensate for the processing overhead of additional channels
-// Index 0=unused, 1=1ch, 2=2ch, 3=3ch, 4=4ch
-// Values tuned so all channels play at similar speed regardless of count
-const uint8_t channel_comp[5] = {0, 1, 2, 2, 4};
 
 // note table (times 4 to compensate for octave nibble+1 encoding)
 const uint16_t note[13] /*PROGMEM*/ = 
@@ -154,6 +149,16 @@ uint16_t data_pointer     [MAX_VOICES],
 		 loop_point       [MAXLOOPS][MAX_VOICES],
 		 pointer_location [MAX_VOICES];
 
+// Timer1 Compare Match A ISR - decrements note lengths at fixed rate
+// Timer fires every ~8ms (128Hz) regardless of number of channels
+ISR(TIMER1_COMPA_vect)
+{
+	for(uint8_t i = 0; i < song_voices; i++)
+	{
+		if(length[i] > 0) length[i]--;
+	}
+}
+
 int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 {
 //#ifndef song_voices
@@ -178,10 +183,6 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 	         buffer2         = 0,
 	         buffer3         = 0;
 	uint16_t buffer4         = 0;
-
-	// main timer variables
-	uint16_t tick_counter    = 0,
-	         tick_speed      = 1024; // default tempo (close to original behavior)
 
 	/* Set each channel's data pointer to that channel's data location in the core data array.
 	 * Initialize each channel's frequencies. By default they're set to zero which causes out of
@@ -210,6 +211,17 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 		//loop_duration    [MAXLOOPS][MAX_VOICES],
 		//loop_point       [MAXLOOPS][MAX_VOICES],
 	}
+
+	// Initialize Timer1 for channel-independent timing
+	// Timer1 CTC mode (16-bit), prescaler 64
+	// Timer fires at ~106 Hz to match original tick rate at tempo 60
+	// Formula: OCR1A = F_CPU / 64 / tick_rate - 1
+	// For 106 Hz: 16000000 / 64 / 106 - 1 = 2357
+	TCCR1A = 0;  // CTC mode (WGM12 only)
+	TCCR1B = (1 << WGM12) | (1 << CS11) | (1 << CS10);  // CTC mode, prescaler 64
+	OCR1A = 2357;  // ~106 Hz at 16MHz
+	TIMSK1 = (1 << OCIE1A);  // enable Timer1 Compare Match A interrupt
+	sei();  // enable global interrupts
 
 	while(1)
 	{
@@ -265,16 +277,11 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 		 *  Data Processing Code  *
 		 **************************/
 
-		if(tick_counter-- == 0)
+		for(uint8_t voice = 0; voice < song_voices; voice++)
 		{
-			// variable tempo, sets the fastest / smallest possible clock event
-			tick_counter = tick_speed;
-
-			for(uint8_t voice = 0; voice < song_voices; voice++)
+			// if the note ended, start processing the next byte of data
+			if(length[voice] == 0)
 			{
-				// if the note ended, start processing the next byte of data
-				if(length[voice] == 0)
-				{
 					LOOP: // yup, a goto, I know
 
 					// single PROGMEM read for both nibbles
@@ -325,18 +332,15 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 						// tempo
 						else if(buffer2 == CMD_FN_TEMPO)
 						{
-							// Fixed tempo formula:
-							// - Inverts the relationship (higher tempo value = slower playback)
-							// - Uses channel compensation factors derived from empirical testing:
-							//   1 channel @ 60 BPM -> tick_speed = 2150
-							//   2 channels @ 60 BPM -> tick_speed = 725
-							//   3 channels @ 60 BPM -> tick_speed = 540
-							uint16_t tempo_value = buffer3 + 1;  // convert 0-255 to 1-256
-							
-							// tick_speed = (TEMPO_BASE * 60) / (channel_comp * tempo_value)
-							uint16_t calc_speed = (TEMPO_BASE * 60UL) / (channel_comp[song_voices] * tempo_value);
-							if (calc_speed < 50) calc_speed = 50;
-							tick_speed = calc_speed;
+							// Timer runs at variable rate based on tempo
+							// Old code: ~106 ticks/sec at tempo 60
+							// Timer frequency = tempo * 106 / 60 Hz
+							// OCR1A = F_CPU / 64 / freq - 1 = 141509 / tempo_value - 1
+							uint16_t tempo_value = buffer3 + 1;
+							uint16_t ocr_value = 141509 / tempo_value;
+							if (ocr_value < 10) ocr_value = 10;
+							if (ocr_value > 65535) ocr_value = 65535;
+							OCR1A = ocr_value;
 							data_pointer[voice] += 2;
 						}
 
@@ -490,13 +494,10 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 						data_pointer[voice]++;
 					}
 				}
-				// keep waiting until the note is over
-				else
-					length[voice]--;
+					// keep waiting until the note is over (handled by Timer1 ISR)
 			}
 		}
 	}
-}
 
 /*******************************************************************************/
 
