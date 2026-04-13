@@ -219,7 +219,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 	// For 106 Hz: 16000000 / 64 / 106 - 1 = 2357
 	TCCR1A = 0;  // CTC mode (WGM12 only)
 	TCCR1B = (1 << WGM12) | (1 << CS11) | (1 << CS10);  // CTC mode, prescaler 64
-	OCR1A = 2357;  // ~106 Hz at 16MHz
+	OCR1A = 9357;  // ~106 Hz at 16MHz
 	TIMSK1 = (1 << OCIE1A);  // enable Timer1 Compare Match A interrupt
 	sei();  // enable global interrupts
 
@@ -333,11 +333,10 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 						else if(buffer2 == CMD_FN_TEMPO)
 						{
 							// Timer runs at variable rate based on tempo
-							// Old code: ~106 ticks/sec at tempo 60
-							// Timer frequency = tempo * 106 / 60 Hz
-							// OCR1A = F_CPU / 64 / freq - 1 = 141509 / tempo_value - 1
+							// Timer frequency = tempo * 128 / 60 Hz
+							// OCR1A = F_CPU / 64 / freq - 1 = (F_CPU / 64) * 60 / (128 * tempo_value) - 1
 							uint16_t tempo_value = buffer3 + 1;
-							uint16_t ocr_value = 141509 / tempo_value;
+							uint16_t ocr_value = (F_CPU / 32 ) / (tempo_value);
 							if (ocr_value < 10) ocr_value = 10;
 							if (ocr_value > 65535) ocr_value = 65535;
 							OCR1A = ocr_value;
