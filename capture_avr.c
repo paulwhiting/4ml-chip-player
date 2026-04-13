@@ -10,7 +10,7 @@
 #define SAMPLE_RATE 44100
 #define SAMPLE_INTERVAL_NS (1000000000ULL / SAMPLE_RATE)
 #define OUTPUT_PIN 3
-#define PORTB_ADDR 0x05
+#define PORTB_ADDR 0x25
 
 static void custom_sleep(struct avr_t * avr, avr_cycle_count_t howLong) {
 }
