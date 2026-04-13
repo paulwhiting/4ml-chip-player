@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdarg.h>
 #include <simavr/sim_avr.h>
 #include <simavr/sim_elf.h>
 #include <simavr/sim_io.h>
@@ -12,6 +13,25 @@
 #define PORTB_ADDR 0x05
 
 static void custom_sleep(struct avr_t * avr, avr_cycle_count_t howLong) {
+}
+
+// Custom logger that suppresses "Loaded" and startup messages but passes through others
+static void quiet_logger(struct avr_t *avr, int level, const char * format, va_list ap) {
+    // Check if this is a message we want to suppress
+    if (strstr(format, "Loaded") != NULL) {
+        return;  // Suppress
+    }
+    if (strstr(format, "Starting ") != NULL) {
+        return;  // Suppress
+    }
+    if (strstr(format, "init") != NULL) {
+        return;  // Suppress "atmega328 init"
+    }
+    if (strstr(format, "reset") != NULL) {
+        return;  // Suppress "atmega328 reset"
+    }
+    // For all other messages, use default behavior (via vfprintf to stderr)
+    vfprintf(stderr, format, ap);
 }
 
 uint32_t get_exit_address(const char *elf_path) {
@@ -42,6 +62,9 @@ int main(int argc, char *argv[])
     }
 
     const char *firmware_path = argv[1];
+
+    // Set up quiet logger BEFORE any simavr functions to suppress "Loaded" messages
+    avr_global_logger_set(quiet_logger);
 
     // Auto-detect _exit address from ELF
     uint32_t exit_addr = get_exit_address(firmware_path);
