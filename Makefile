@@ -79,6 +79,8 @@ $(DEPS_SIMAVR):
 # Generate MP3 from ELF firmware
 %.mp3: %.elf capture_avr
 	./capture_avr "$<" > "$<.tmp.raw"
-	lame -b 128 -r -s 44.1 "$<.tmp.raw" "$@"
-	rm -f "$<.tmp.raw"
+	python3 filter_audio.py 20 < "$<.tmp.raw" > "$<.filtered.raw"
+	ffmpeg -f s16le -ar 44100 -ac 1 -i "$<.filtered.raw" -y "$<.wav"
+	ffmpeg -i "$<.wav" -b:a 128k -y "$@"
+	rm -f "$<.tmp.raw" "$<.filtered.raw"
 

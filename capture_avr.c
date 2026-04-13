@@ -6,31 +6,22 @@
 #include <simavr/sim_avr.h>
 #include <simavr/sim_elf.h>
 #include <simavr/sim_io.h>
+#include <simavr/sim_time.h>
+#include <simavr/sim_cycle_timers.h>
 
-#define SAMPLE_RATE 44100
-#define SAMPLE_INTERVAL_NS (1000000000ULL / SAMPLE_RATE)
 #define OUTPUT_PIN 3
 #define PORTB_ADDR 0x25
+#define SAMPLE_RATE 44100
+#define SAMPLE_INTERVAL_USEC 23
 
 static void custom_sleep(struct avr_t * avr, avr_cycle_count_t howLong) {
 }
 
-// Custom logger that suppresses "Loaded" and startup messages but passes through others
 static void quiet_logger(struct avr_t *avr, int level, const char * format, va_list ap) {
-    // Check if this is a message we want to suppress
-    if (strstr(format, "Loaded") != NULL) {
-        return;  // Suppress
-    }
-    if (strstr(format, "Starting ") != NULL) {
-        return;  // Suppress
-    }
-    if (strstr(format, "init") != NULL) {
-        return;  // Suppress "atmega328 init"
-    }
-    if (strstr(format, "reset") != NULL) {
-        return;  // Suppress "atmega328 reset"
-    }
-    // For all other messages, use default behavior (via vfprintf to stderr)
+    if (strstr(format, "Loaded") != NULL) return;
+    if (strstr(format, "Starting ") != NULL) return;
+    if (strstr(format, "init") != NULL) return;
+    if (strstr(format, "reset") != NULL) return;
     vfprintf(stderr, format, ap);
 }
 
@@ -39,10 +30,7 @@ uint32_t get_exit_address(const char *elf_path) {
     snprintf(cmd, sizeof(cmd), "avr-nm \"%s\" 2>/dev/null | grep ' T _exit' | awk '{print $1}'", elf_path);
     
     FILE *fp = popen(cmd, "r");
-    if (!fp) {
-        fprintf(stderr, "Warning: Could not run avr-nm to find _exit, using fallback\n");
-        return 0;
-    }
+    if (!fp) return 0;
     
     uint32_t addr = 0;
     char buf[32];
@@ -54,6 +42,43 @@ uint32_t get_exit_address(const char *elf_path) {
     return addr;
 }
 
+typedef struct {
+    avr_t *avr;
+    uint32_t exit_addr;
+    uint8_t last_pin_state;
+    uint32_t total_samples;
+    int done;
+} capture_data_t;
+
+static avr_cycle_count_t sample_timer(
+    struct avr_t * avr,
+    avr_cycle_count_t when,
+    void * param)
+{
+    capture_data_t *data = (capture_data_t *)param;
+    
+    uint8_t portb = avr->data[PORTB_ADDR];
+    uint8_t pin_state = (portb >> OUTPUT_PIN) & 1;
+    uint8_t sample = pin_state ? 255 : 0;
+    fwrite(&sample, 1, 1, stdout);
+    data->last_pin_state = pin_state;
+    data->total_samples++;
+    
+    static int debug_count = 0;
+    if (debug_count++ % 1000 == 0) {
+        fprintf(stderr, "SAMPLE: pin=%d samples=%u cycles=%u\n", 
+                pin_state, data->total_samples, (unsigned)when);
+    }
+    
+    if (avr->pc >= data->exit_addr && avr->pc <= data->exit_addr + 10) {
+        fprintf(stderr, "EXIT detected at PC=%u\n", avr->pc);
+        data->done = 1;
+        return 0;
+    }
+    
+    return when + avr_usec_to_cycles(avr, SAMPLE_INTERVAL_USEC);
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 2) {
@@ -63,15 +88,14 @@ int main(int argc, char *argv[])
 
     const char *firmware_path = argv[1];
 
-    // Set up quiet logger BEFORE any simavr functions to suppress "Loaded" messages
     avr_global_logger_set(quiet_logger);
 
-    // Auto-detect _exit address from ELF
     uint32_t exit_addr = get_exit_address(firmware_path);
     if (!exit_addr) {
         fprintf(stderr, "Error: Could not find _exit address in ELF\n");
         return 1;
     }
+    fprintf(stderr, "Exit address: %u\n", exit_addr);
 
     elf_firmware_t firmware;
     if (elf_read_firmware(firmware_path, &firmware) < 0) {
@@ -103,38 +127,21 @@ int main(int argc, char *argv[])
 
     avr->pc = 0;
 
-    uint64_t last_sample_time = 0;
-    uint8_t last_pin_state = 0;
-    uint32_t total_samples = 0;
+    capture_data_t data = {
+        .avr = avr,
+        .exit_addr = exit_addr,
+        .last_pin_state = 0,
+        .total_samples = 0,
+        .done = 0
+    };
 
-    while (1) {
+    avr_cycle_count_t first_timer = avr->cycle + avr_usec_to_cycles(avr, SAMPLE_INTERVAL_USEC);
+    avr_cycle_timer_register(avr, first_timer, sample_timer, &data);
+
+    while (!data.done) {
         avr_run(avr);
-        
-        uint64_t now = avr_get_time_stamp(avr);
-        
-        // Check for exit: PC at _exit function
-        if (avr->pc == exit_addr && total_samples > 1000) {
-            break;
-        }
-        
-        while (now - last_sample_time >= SAMPLE_INTERVAL_NS) {
-            uint8_t portb = avr->data[PORTB_ADDR];
-            uint8_t pin_state = (portb >> OUTPUT_PIN) & 1;
-            uint8_t sample = pin_state ? 255 : 0;
-            fwrite(&sample, 1, 1, stdout);
-            last_sample_time += SAMPLE_INTERVAL_NS;
-            last_pin_state = pin_state;
-            total_samples++;
-        }
     }
 
-    uint64_t final_time = avr_get_time_stamp(avr);
-    while (last_sample_time + SAMPLE_INTERVAL_NS <= final_time) {
-        uint8_t sample = last_pin_state ? 255 : 0;
-        fwrite(&sample, 1, 1, stdout);
-        last_sample_time += SAMPLE_INTERVAL_NS;
-        total_samples++;
-    }
-
+    fprintf(stderr, "Done: %u samples captured\n", data.total_samples);
     return 0;
 }
