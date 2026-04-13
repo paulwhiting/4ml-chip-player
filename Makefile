@@ -76,7 +76,9 @@ $(DEPS_SIMAVR):
 	mkdir -p deps/simavr
 	cp -r /tmp/simavr/usr/include/simavr deps/simavr/
 
-# Generate MP3 from ELF firmware (with 60s timeout)
+# Generate MP3 from ELF firmware
 %.mp3: %.elf capture_avr
-	timeout 60s ./capture_avr "$<" | lame -b 128 -r -s 44.1 - "$@"
+	./capture_avr "$<" > "$<.tmp.raw"
+	lame -b 128 -r -s 44.1 "$<.tmp.raw" "$@"
+	rm -f "$<.tmp.raw"
 

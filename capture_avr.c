@@ -14,6 +14,26 @@
 static void custom_sleep(struct avr_t * avr, avr_cycle_count_t howLong) {
 }
 
+uint32_t get_exit_address(const char *elf_path) {
+    char cmd[512];
+    snprintf(cmd, sizeof(cmd), "avr-nm \"%s\" 2>/dev/null | grep ' T _exit' | awk '{print $1}'", elf_path);
+    
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        fprintf(stderr, "Warning: Could not run avr-nm to find _exit, using fallback\n");
+        return 0;
+    }
+    
+    uint32_t addr = 0;
+    char buf[32];
+    if (fgets(buf, sizeof(buf), fp)) {
+        addr = strtoul(buf, NULL, 16);
+    }
+    pclose(fp);
+    
+    return addr;
+}
+
 int main(int argc, char *argv[])
 {
     if (argc < 2) {
@@ -22,6 +42,13 @@ int main(int argc, char *argv[])
     }
 
     const char *firmware_path = argv[1];
+
+    // Auto-detect _exit address from ELF
+    uint32_t exit_addr = get_exit_address(firmware_path);
+    if (!exit_addr) {
+        fprintf(stderr, "Error: Could not find _exit address in ELF\n");
+        return 1;
+    }
 
     elf_firmware_t firmware;
     if (elf_read_firmware(firmware_path, &firmware) < 0) {
@@ -59,9 +86,11 @@ int main(int argc, char *argv[])
 
     while (1) {
         avr_run(avr);
+        
         uint64_t now = avr_get_time_stamp(avr);
         
-        if (avr->state == cpu_Done || avr->state == cpu_Crashed) {
+        // Check for exit: PC at _exit function
+        if (avr->pc == exit_addr && total_samples > 1000) {
             break;
         }
         
