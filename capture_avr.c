@@ -8,11 +8,12 @@
 #include <simavr/sim_io.h>
 #include <simavr/sim_time.h>
 #include <simavr/sim_cycle_timers.h>
+#include <simavr/avr_ioport.h>
 
 #define OUTPUT_PIN 3
 #define PORTB_ADDR 0x25
 #define SAMPLE_RATE 44100
-#define SAMPLE_INTERVAL_USEC 23
+#define SAMPLE_INTERVAL_USEC (1000000 / SAMPLE_RATE)
 
 static void custom_sleep(struct avr_t * avr, avr_cycle_count_t howLong) {
 }
@@ -45,10 +46,22 @@ uint32_t get_exit_address(const char *elf_path) {
 typedef struct {
     avr_t *avr;
     uint32_t exit_addr;
-    uint8_t last_pin_state;
+    avr_cycle_count_t last_sample_cycle;
     uint32_t total_samples;
-    int done;
+    uint8_t current_pin_state;
+    uint8_t done;
 } capture_data_t;
+
+static void pin_change_callback(
+    struct avr_irq_t * irq,
+    uint32_t value,
+    void * param)
+{
+    capture_data_t *data = (capture_data_t *)param;
+    
+    uint8_t pin_state = value & 1;
+    data->current_pin_state = pin_state;
+}
 
 static avr_cycle_count_t sample_timer(
     struct avr_t * avr,
@@ -57,17 +70,15 @@ static avr_cycle_count_t sample_timer(
 {
     capture_data_t *data = (capture_data_t *)param;
     
-    uint8_t portb = avr->data[PORTB_ADDR];
-    uint8_t pin_state = (portb >> OUTPUT_PIN) & 1;
-    uint8_t sample = pin_state ? 255 : 0;
+    uint8_t sample = data->current_pin_state ? 255 : 0;
     fwrite(&sample, 1, 1, stdout);
-    data->last_pin_state = pin_state;
     data->total_samples++;
+    data->last_sample_cycle = when;
     
     static int debug_count = 0;
-    if (debug_count++ % 1000 == 0) {
+    if (debug_count++ % 10000 == 0) {
         fprintf(stderr, "SAMPLE: pin=%d samples=%u cycles=%u\n", 
-                pin_state, data->total_samples, (unsigned)when);
+                data->current_pin_state, data->total_samples, (unsigned)when);
     }
     
     if (avr->pc >= data->exit_addr && avr->pc <= data->exit_addr + 10) {
@@ -130,10 +141,18 @@ int main(int argc, char *argv[])
     capture_data_t data = {
         .avr = avr,
         .exit_addr = exit_addr,
-        .last_pin_state = 0,
+        .last_sample_cycle = 0,
         .total_samples = 0,
+        .current_pin_state = 0,
         .done = 0
     };
+
+    avr_irq_t *portb_irq = avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('B'), OUTPUT_PIN);
+    if (!portb_irq) {
+        fprintf(stderr, "Error: Could not get PORTB IRQ for pin %d\n", OUTPUT_PIN);
+        return 1;
+    }
+    avr_irq_register_notify(portb_irq, pin_change_callback, &data);
 
     avr_cycle_count_t first_timer = avr->cycle + avr_usec_to_cycles(avr, SAMPLE_INTERVAL_USEC);
     avr_cycle_timer_register(avr, first_timer, sample_timer, &data);

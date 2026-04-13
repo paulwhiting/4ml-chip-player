@@ -1,7 +1,7 @@
 default:
 	echo Specify a rule to build
 
-.PRECIOUS: %.4ml
+.PRECIOUS: %.4ml %.raw
 
 %.mid: %.MID
 	cp "$<" "$@"
@@ -77,10 +77,15 @@ $(DEPS_SIMAVR):
 	cp -r /tmp/simavr/usr/include/simavr deps/simavr/
 
 # Generate MP3 from ELF firmware
-%.mp3: %.elf capture_avr
-	./capture_avr "$<" > "$<.tmp.raw"
-	python3 filter_audio.py 20 < "$<.tmp.raw" > "$<.filtered.raw"
-	ffmpeg -f s16le -ar 44100 -ac 1 -i "$<.filtered.raw" -y "$<.wav"
-	ffmpeg -i "$<.wav" -b:a 128k -y "$@"
-	rm -f "$<.tmp.raw" "$<.filtered.raw"
+%.elf.raw: %.elf capture_avr
+	./capture_avr "$<" > "$<.raw"
+
+# Generate MP3 from ELF firmware
+%.elf.filtered.wav: %.elf.raw
+	python3 filter_audio.py 5 < "$<" > "$<.filtered"
+	ffmpeg -f s16le -ar 44100 -ac 1 -i "$<.filtered" -y "$@"
+
+# Generate MP3 from ELF firmware
+%.mp3: %.elf.filtered.wav
+	ffmpeg -i "$<" -b:a 128k -y "$@"
 
