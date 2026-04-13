@@ -50,6 +50,11 @@ endef
 %.atmega.bin: %.4ml.avr.h bonus/player-avr/4ml-avr-player.c
 	$(call BUILD_BINARY,atmega328p,$@,$<,16000000UL)
 
+%.elf: %.4ml.avr.h bonus/player-avr/4ml-avr-player.c
+	cp "$<" bonus/player-avr/4ml-data.h
+	avr-gcc -Os -std=gnu99 -DF_CPU=16000000UL -mmcu=atmega328p \
+		-o "$@" bonus/player-avr/4ml-avr-player.c
+
 %.hex: %.bin
 	avr-objcopy -j .text -j .data -O ihex "$<" "$@"
 
@@ -57,4 +62,21 @@ endef
 	cp "$<" tmp.hex
 	avrdude -p m328p -c arduino -P /dev/ttyUSB0 -b 115200 -D -U flash:w:tmp.hex:i
 	rm tmp.hex
+
+# === capture_avr (AVR simulator + audio capture) ===
+# Runtime dependency: libsimavr.so.2 (install via apt on Debian/Ubuntu)
+
+DEPS_SIMAVR = deps/simavr
+
+capture_avr: capture_avr.c $(DEPS_SIMAVR)
+	gcc -o $@ $< -I$(DEPS_SIMAVR) -L/lib/x86_64-linux-gnu \
+		-l:libsimavr.so.2 -Wl,-rpath,/lib/x86_64-linux-gnu
+
+$(DEPS_SIMAVR):
+	mkdir -p deps/simavr
+	cp -r /tmp/simavr/usr/include/simavr deps/simavr/
+
+# Generate MP3 from ELF firmware (with 60s timeout)
+%.mp3: %.elf capture_avr
+	timeout 60s ./capture_avr "$<" | lame -b 128 -r -s 44.1 - "$@"
 
