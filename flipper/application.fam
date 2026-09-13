@@ -1,0 +1,9 @@
+App(
+    appid="4ml_player",
+    name="4ML Chip Player",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="flipper_player_app",
+    fap_category="Media",
+    fap_version="1.0.0",
+    requires=["gui"],
+)

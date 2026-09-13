@@ -1,0 +1,17 @@
+
+STM32C011J6M6
+
+Qty   Price Per   Total
+1     $0.79000    $0.79
+10    $0.56200    $5.62
+25    $0.50480    $12.62
+100   $0.44240    $44.24
+
+The chip uses VDD power (3.3v), so a similarly rated buzzer should be used.
+
+
+What about MSPM0C1104SDDFR? from TI? .... cheaper but super small package.
+
+
+Mouser - 10 for $15 ($6.50 item / 8.50 shipping).... 75 for $50 total.... 50 for $35... 40 for $30
+Digikey - 

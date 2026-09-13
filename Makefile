@@ -21,8 +21,9 @@ default:
 %.4ml.avr.h: %.4ml compiler/compiler.py
 	python3 compiler/compiler.py --avr "$<" > "$@"
 
-album.4ml.avr.h: zelda.4ml z2-title.4ml z2-palace.4ml bonus/player-avr/songs/ninjagaiden.4ml bonus/player-avr/songs/wizards-and-warriors-intro.4ml mario.min.4ml
-	python3 compiler/compiler.py --avr "$^" > "$@"
+#album.4ml.avr.h: zelda.4ml z2-title.4ml z2-palace.4ml bonus/player-avr/songs/ninjagaiden.4ml bonus/player-avr/songs/wizards-and-warriors-intro.4ml mario.min.4ml
+album.4ml.avr.h: bonus/player-avr/songs/ninjagaiden.4ml bonus/player-avr/songs/wizards-and-warriors-intro.4ml
+	python3 compiler/compiler.py --avr $^ > "$@"
 
 album2.4ml.avr.h: n-a-z.4ml bonus/player-avr/songs/ninjagaiden.4ml
 	python3 compiler/compiler.py --avr "$^" > "$@"
@@ -78,10 +79,25 @@ capture_avr: capture_avr.c $(DEPS_SIMAVR)
 
 # Generate MP3 from ELF firmware
 %.elf.filtered.wav: %.elf.raw
-	python3 filter_audio.py 5 < "$<" > "$<.filtered"
+	python3 filter_audio.py 1 < "$<" > "$<.filtered"
 	ffmpeg -f s16le -ar 44100 -ac 1 -i "$<.filtered" -y "$@"
 
 # Generate MP3 from ELF firmware
 %.mp3: %.elf.filtered.wav
 	ffmpeg -i "$<" -b:a 128k -y "$@"
+
+# === Flipper Zero ===
+# Using uFBT (micro Flipper Build Tool)
+# Build: make flipper/4ml_player.fap
+# Flash: make flipper/flash (requires Flipper connected via USB)
+
+flipper/4ml-data.h: album.4ml.avr.h
+	sed 's/PROGMEM//' "$<" | sed '1i #include <stdint.h>' > "$@"
+
+flipper/4ml_player.fap: flipper/4ml-flipper-player.c flipper/application.fam
+	cd flipper && ufbt build
+	cp ~/.ufbt/build/4ml_player.fap "$@"
+
+flipper/flash: flipper/4ml-flipper-player.c flipper/application.fam
+	cd flipper && ufbt launch
 

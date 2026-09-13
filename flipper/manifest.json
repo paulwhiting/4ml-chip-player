@@ -1,0 +1,26 @@
+{
+    "id": "4ml_player",
+    "name": "4ML Chip Player",
+    "arc21": {
+        "apiVersion": "2",
+        "architecture": "arm64",
+        "context": "unit",
+        "entryPoint": "flipper_player_app",
+        "icon": "icons/icon.png",
+        "stackSize": 4096,
+        "app": "empty",
+        "requires": [
+            "gpio"
+        ],
+        "resources": {
+            "keys": [
+                "songs"
+            ]
+        }
+    },
+    "version": "1.0.0",
+    "licence": "MIT",
+    "author": "Blake 'PROTODOME' Troise",
+    "description": "Play 4ML chiptune music via bit-banging on the buzzer pin",
+    "category": "Media"
+}

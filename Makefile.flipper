@@ -1,0 +1,17 @@
+# === Flipper Zero ===
+# Using uFBT (micro Flipper Build Tool)
+
+flipper/4ml_data_f.h: album.4ml.avr.h
+	sed 's/PROGMEM//' album.4ml.avr.h | sed '1i #include <stdint.h>' > flipper/4ml-data.h
+
+flipper/4ml_player.fap: flipper/4ml-flipper-player.c flipper/application.fam flipper/4ml-data.h
+	cd flipper && ufbt build
+	cp ~/.ufbt/build/4ml_player.fap flipper/
+
+# Build and launch on connected Flipper (requires USB connection)
+flipper/flash: flipper/4ml-flipper-player.c flipper/application.fam
+	cd flipper && ufbt launch
+
+# Just launch already-built app
+flipper/relaunch:
+	cd flipper && ufbt launch
