@@ -51,18 +51,87 @@ endef
 %.atmega.bin: %.4ml.avr.h bonus/player-avr/4ml-avr-player.c
 	$(call BUILD_BINARY,atmega328p,$@,$<,16000000UL)
 
-%.elf: %.4ml.avr.h bonus/player-avr/4ml-avr-player.c
+%.atmega.elf: %.4ml.avr.h bonus/player-avr/4ml-avr-player.c
 	cp "$<" bonus/player-avr/4ml-data.h
 	avr-gcc -Os -std=gnu99 -DF_CPU=16000000UL -mmcu=atmega328p \
 		-o "$@" bonus/player-avr/4ml-avr-player.c
 
-%.hex: %.bin
+%.atmega.hex: %.bin
 	avr-objcopy -j .text -j .data -O ihex "$<" "$@"
 
-%: %.atmega.hex
+%.atmega: %.atmega.hex
 	cp "$<" tmp.hex
 	avrdude -p m328p -c arduino -P /dev/ttyUSB0 -b 115200 -D -U flash:w:tmp.hex:i
 	rm tmp.hex
+
+
+
+
+#######################################################
+####   STM32 section
+
+CC = clang
+OBJCOPY = llvm-objcopy-19
+SIZE = llvm-size-19
+FLASHER = /opt/st/stm32cubeide_2.2.0/plugins/com.st.stm32cube.ide.mcu.externaltools.cubeprogrammer.linux64_2.2.500.202603051304/tools/bin/STM32_Programmer_CLI
+
+CFLAGS = \
+	--target=arm-none-eabi \
+	-mcpu=cortex-m0plus \
+	-mthumb \
+	-O2 \
+	-ffreestanding \
+	-fno-builtin \
+	-Wall \
+	-Wextra \
+	-DSTM32C011
+
+LDFLAGS = \
+	--target=arm-none-eabi \
+	-mcpu=cortex-m0plus \
+	-mthumb \
+	-nostdlib \
+	-fuse-ld=lld \
+	-Wl,-T,stm32c011.ld \
+	-Wl,-e,Reset_Handler
+
+main.o: main.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+stm32c011-startup.o: stm32c011-startup.s
+	$(CC) \
+		--target=arm-none-eabi \
+		-mcpu=cortex-m0plus \
+		-mthumb \
+		-c $< -o $@
+
+#$(TARGET).elf: main.o startup.o
+#	$(CC) $(LDFLAGS) main.o startup.o -o $@
+#	$(SIZE) $@
+
+%.st.bin: %.4ml.avr.h bonus/player-avr/4ml-avr-player.c stm32c011-startup.o
+	cp "$<" bonus/player-avr/4ml-data.h
+	$(CC) $(CFLAGS) $(LDFLAGS) stm32c011-startup.o -o "$@" bonus/player-avr/4ml-avr-player.c
+	$(SIZE) $@
+
+%.st.hex: %.st.bin
+	$(OBJCOPY) -O ihex $< $@
+
+clean:
+	rm -f *.o *.elf *.bin
+
+%.st: %.st.hex
+	$(FLASHER) \
+		-c port=SWD \
+		-d "$<" \
+		-v \
+		-rst
+
+.PHONY: all clean flash
+
+
+
+
 
 # === capture_avr (AVR simulator + audio capture) ===
 # Runtime dependency: libsimavr.so.2 (install via apt on Debian/Ubuntu)

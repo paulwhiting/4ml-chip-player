@@ -1,3 +1,4 @@
+
 /*H*****************************************************************************
 *  FILENAME:     4ml-avr-player.c
 *  DESCRIPTION:  Mega Micro Music Macro Language (4ML) Player for AVR
@@ -26,10 +27,138 @@
 *                28th January 2024 (Update)
 *****************************************************************************H*/
 
+#include <stdint.h>
 
-#include <avr/io.h>         // core avr functionality
-#include <avr/pgmspace.h>   // * * *
-#include <util/delay.h>
+/*
+ * --------------------------------------------------------------------------
+ * Platform selection
+ * --------------------------------------------------------------------------
+ *
+ * Define STM32C011 when compiling for the STM32.
+ *
+ * Otherwise the original AVR implementation is used.
+ */
+
+#if defined(STM32C011)
+
+    /*
+     * STM32C011J6M6
+     *
+     * Physical pin 5 = PA8 = TIM1_CH1
+     */
+
+    #define OUTPUT 0
+
+    /*
+     * We use PA8 as a normal GPIO output for the 1-bit synthesizer.
+     *
+     * This is intentional: the 4ML engine produces a rapidly changing
+     * 1-bit waveform. We are NOT converting the three voices into
+     * independent hardware PWM channels.
+     */
+
+    #define RCC_BASE        0x40021000UL
+    #define GPIOA_BASE      0x50000000UL
+
+    #define RCC_IOPENR      (*(volatile uint32_t *)(RCC_BASE + 0x34))
+    #define GPIOA_MODER     (*(volatile uint32_t *)(GPIOA_BASE + 0x00))
+    #define GPIOA_ODR       (*(volatile uint32_t *)(GPIOA_BASE + 0x14))
+
+    #define RCC_IOPENR_GPIOAEN    (1UL << 0)
+
+    #define STM32_OUTPUT_MASK      (1UL << 8)
+
+
+    static inline void audio_init(void)
+    {
+        /*
+         * Enable GPIOA.
+         */
+        RCC_IOPENR |= RCC_IOPENR_GPIOAEN;
+
+        /*
+         * PA8 -> general-purpose output.
+         *
+         * MODER8 = 01
+         */
+        GPIOA_MODER &= ~(3UL << 16);
+        GPIOA_MODER |=  (1UL << 16);
+
+        /*
+         * Start low.
+         */
+        GPIOA_ODR &= ~STM32_OUTPUT_MASK;
+    }
+
+
+    static inline void audio_write(uint8_t value)
+    {
+        if (value)
+            GPIOA_ODR |= STM32_OUTPUT_MASK;
+        else
+            GPIOA_ODR &= ~STM32_OUTPUT_MASK;
+    }
+
+
+	static inline void stm32_delay_ms(uint32_t ms)
+	{
+		/*
+		 * STM32C011 running from HSI48.
+		 *
+		 * This is only used for the occasional long delay, not
+		 * for generating the music waveform.
+		 */
+		while (ms--)
+		{
+			for (volatile uint32_t i = 0; i < 8000; i++)
+			{
+				__asm volatile ("nop");
+			}
+		}
+	}
+
+	#define _delay_ms(ms) stm32_delay_ms((uint32_t)(ms))
+
+
+    /*
+     * STM32 has no AVR PROGMEM.
+     *
+     * Data lives in normal flash, which the Cortex-M can read directly.
+     */
+    #define READ8(p)        (*(const uint8_t *)(p))
+    #define READ16(p)       (*(const uint16_t *)(p))
+	#define AVR_PROGMEM
+
+#else
+
+    /*
+     * Original AVR implementation.
+     */
+
+    #include <avr/io.h>         // core avr functionality
+    #include <avr/pgmspace.h>   // * * *
+
+	#include <util/delay.h>
+
+
+    // stuff you can mess with
+    //#define OUTPUT 0
+    #define OUTPUT         3    // the PORTB hardware output pin
+
+	// initialize output pin
+    #define audio_init() \
+        do { DDRB = (uint8_t)(1U << OUTPUT); } while (0)
+
+    #define audio_write(value) \
+        do { PORTB = (value); } while (0)
+
+    #define READ8(p)        pgm_read_byte(&(p))
+    #define READ16(p)       pgm_read_word(&(p))
+
+	#define AVR_PROGMEM PROGMEM
+
+#endif
+
 
 #include "4ml-data.h"       // holds the _4ml_data[] arrays
 
@@ -37,15 +166,10 @@
 #include <stdio.h>
 #endif
 
-// stuff you can mess with
-//#define OUTPUT         0    // the PORTB hardware output pin
-#define OUTPUT         3    // the PORTB hardware output pin
-
 // stuff you shouldn't really mess with
 #define SAMPLE_SPEED   5    // the sampler playback rate
 #define SAMPLE_LENGTH  127  // the length of the sample array
 #define MAXLOOPS       5    // the maximum number of nested loops
-
 
 #define CMD_REST    0
 #define CMD_OCTAVE 13
@@ -67,7 +191,7 @@
 // throw a compile-time error if the 4ML data isn't AVR compatible
 
 // note table (times 4 to compensate for octave nibble+1 encoding)
-const uint16_t note[13] /*PROGMEM*/ = 
+const uint16_t note[13] = 
 {
 	// the rest command is technically note 0 and thus requires a frequency 
 	255,
@@ -76,13 +200,13 @@ const uint16_t note[13] /*PROGMEM*/ =
 };
 
 // location of individual samples in sample array
-const uint8_t sample_index[6] PROGMEM =
+const uint8_t sample_index[6] AVR_PROGMEM =
 {
 	0,19,34,74,118,126
 };
 
 // raw PWM sample data
-const uint8_t sample[SAMPLE_LENGTH] PROGMEM =
+const uint8_t sample[SAMPLE_LENGTH] AVR_PROGMEM =
 {
 	// bwoop (0)
 	0b10101010,0b10110110,0b10000111,0b11111000,
@@ -182,9 +306,9 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 
 	for(uint8_t i = 0; i < song_voices; i++)
 	{
-		data_pointer[i] = pgm_read_byte(_4ml_data + ((i*2)+song_idx));
+		data_pointer[i] = READ8(_4ml_data + ((i*2)+song_idx));
 		data_pointer[i] = data_pointer[i] << 8;
-		data_pointer[i] = data_pointer[i] | pgm_read_byte(&_4ml_data[(i*2)+1+song_idx]);
+		data_pointer[i] = data_pointer[i] | READ8(&_4ml_data[(i*2)+1+song_idx]);
 
 		frequency[i]       = 255; // random frequency (won't ever be sounded)
 		volume[i]          = 1;
@@ -215,7 +339,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
         /* One branch per voice: out = (pitch_counter < waveform) ? high : 0 */
         for(uint8_t voice = 0; voice < song_voices; voice++) {
 			if (is_percussion[voice] == 0) {
-				PORTB = out[voice];
+				audio_write(out[voice]);
 				pitch_counter[voice] += octave[voice];
 				if(pitch_counter[voice] >= frequency[voice])
 					pitch_counter[voice] -= frequency[voice];
@@ -224,11 +348,11 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 
 			else if(sample_counter-- == 0)
 			{
-				PORTB = out[voice];
+				audio_write(out[voice]);
 				if(currentByte < current_sample - 1)
 				{
 					// read individual bits from the sample array
-					out[voice] = ((pgm_read_byte(&sample[currentByte]) >> currentBit++) & 1) << OUTPUT;
+					out[voice] = ((READ8(&sample[currentByte]) >> currentBit++) & 1) << OUTPUT;
 				}
 				else
 				{
@@ -250,7 +374,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 				sample_counter = SAMPLE_SPEED;
 			}
         }
-		PORTB = 0;
+		audio_write(0);
 
 
 		/**************************
@@ -270,14 +394,14 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 					LOOP: // yup, a goto, I know
 
 					// single PROGMEM read for both nibbles
-					buffer1 = pgm_read_byte(&_4ml_data[data_pointer[voice]]);
+					buffer1 = READ8(&_4ml_data[data_pointer[voice]]);
 					buffer2 = buffer1 & 15;
 					buffer1 = buffer1 >> 4;
 
 					if(buffer1 == CMD_FN)
 					{
 						// another buffer for commands that require an additional byte
-						buffer3 = pgm_read_byte(&_4ml_data[data_pointer[voice]+1]);
+						buffer3 = READ8(&_4ml_data[data_pointer[voice]+1]);
 						uint8_t la; /* cache loop index to avoid repeated loops_active[voice]-1 */
 
 						// loop start
@@ -311,8 +435,8 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 						{
 							uint16_t off = song_idx + (uint16_t)(buffer3 + song_voices) * 2;
 							pointer_location[voice] = data_pointer[voice] + 2;
-							data_pointer[voice] = (uint16_t)pgm_read_byte(&_4ml_data[off]) << 8;
-							data_pointer[voice] |= pgm_read_byte(&_4ml_data[off + 1]);
+							data_pointer[voice] = (uint16_t)READ8(&_4ml_data[off]) << 8;
+							data_pointer[voice] |= READ8(&_4ml_data[off + 1]);
 						}
 						// tempo
 						else if(buffer2 == CMD_FN_TEMPO)
@@ -389,8 +513,8 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 								return 0;
 
 								// Old behavior to loop the channel indefinitely
-								//data_pointer[voice] = pgm_read_byte(&_4ml_data[(voice*2)]) << 8;
-								//data_pointer[voice] |= pgm_read_byte(&_4ml_data[(voice*2)+1]);
+								//data_pointer[voice] = READ8(&_4ml_data[(voice*2)]) << 8;
+								//data_pointer[voice] |= READ8(&_4ml_data[(voice*2)+1]);
 							}
 						}
 
@@ -421,7 +545,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 					if(buffer1 != CMD_REST && buffer1 < CMD_OCTAVE)
 					{
 						if (is_percussion[voice] == 0) {
-							//buffer4 = pgm_read_word(&note[buffer1]);
+							//buffer4 = READ16(&note[buffer1]);
 							buffer4 = note[buffer1];
 							frequency[voice] = buffer4;
 
@@ -436,8 +560,8 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 							}
 							// reset the sampler
 							currentBit     = 0;
-							currentByte    = pgm_read_byte(&sample_index[buffer1 - 1]);
-							current_sample = pgm_read_byte(&sample_index[buffer1]);
+							currentByte    = READ8(&sample_index[buffer1 - 1]);
+							current_sample = READ8(&sample_index[buffer1]);
 						}
 					
 					}
@@ -453,7 +577,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 					if(buffer2 == 15)
 					{
 						// Extended duration (AVR-specific): next byte = 128th-note count.
-						uint8_t ext_len = pgm_read_byte(&_4ml_data[data_pointer[voice]+1]);
+						uint8_t ext_len = READ8(&_4ml_data[data_pointer[voice]+1]);
 						// the -1 accounts for length[voice] counting "0" as 1 128th note, "1" as 2 128th notes, etc.
 						length[voice] = ext_len - 1;
 						data_pointer[voice] += 2;
@@ -517,7 +641,7 @@ int uart_putchar(char c, FILE *stream) {
 // Setup the standard output stream to use uart_putchar
 FILE output = FDEV_SETUP_STREAM(uart_putchar, NULL, _FDEV_SETUP_WRITE);
 
-void uart_init(void) {
+void uart_init_for_AT(void) {
     // Hardware UART init (if available, e.g., ATtiny1634)
     UBRR0H = UBRRH_VALUE;
     UBRR0L = UBRRL_VALUE;
@@ -533,11 +657,12 @@ int main(void)
     // set clock to 8mhz for atmega328p
     //CLKPR = _BV(CLKPCE);
     //CLKPR = _BV(CLKPS0);
-    uart_init();
+
+    //uart_init_for_AT();
 #endif
 
 	// initialize output pin
-	DDRB = 0b00000001 << OUTPUT;
+	audio_init();
 
 	uint8_t album_idx = 0;
 

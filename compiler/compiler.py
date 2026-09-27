@@ -727,7 +727,7 @@ def main():
 
 		# if it's AVR, we'll need to store it in program memory
 		if target_platform == 'AVR':
-			print("const unsigned char _4ml_data[] PROGMEM = {")
+			print("const unsigned char _4ml_data[] AVR_PROGMEM = {")
 		else:
 			print("const unsigned char _4ml_data[] = {")
 
