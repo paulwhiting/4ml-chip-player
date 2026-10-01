@@ -14,6 +14,9 @@ default:
 %.min.4ml: %.4ml
 	python3 compiler/4ml-extract-patterns.py "$<" > "$@"
 
+%.reduced.4ml: %.4ml
+	python compiler/4ml-reduce-channels.py "$<" > "$@"
+
 %.4ml.h: %.4ml compiler/compiler.py
 	python3 compiler/compiler.py "$<"
 	mv 4ml-data.h "$@"
@@ -123,9 +126,13 @@ clean:
 %.st: %.st.hex
 	$(FLASHER) \
 		-c port=SWD \
+		-ob NRST_MODE=2
+	$(FLASHER) \
+		-c port=SWD \
 		-d "$<" \
 		-v \
 		-rst
+
 
 .PHONY: all clean flash
 

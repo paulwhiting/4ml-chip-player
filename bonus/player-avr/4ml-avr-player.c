@@ -29,6 +29,9 @@
 
 #include <stdint.h>
 
+// differential drive
+#define USE_COMPLEMENTARY_OUTPUT 1
+
 /*
  * --------------------------------------------------------------------------
  * Platform selection
@@ -50,7 +53,7 @@
     #define OUTPUT 0
 
     /*
-     * We use PA8 as a normal GPIO output for the 1-bit synthesizer.
+	 * We use PA8 as a normal GPIO output for the 1-bit synthesizer.
      *
      * This is intentional: the 4ML engine produces a rapidly changing
      * 1-bit waveform. We are NOT converting the three voices into
@@ -58,45 +61,109 @@
      */
 
     #define RCC_BASE        0x40021000UL
-    #define GPIOA_BASE      0x50000000UL
-
     #define RCC_IOPENR      (*(volatile uint32_t *)(RCC_BASE + 0x34))
-    #define GPIOA_MODER     (*(volatile uint32_t *)(GPIOA_BASE + 0x00))
-    #define GPIOA_ODR       (*(volatile uint32_t *)(GPIOA_BASE + 0x14))
+	#define RCC_APBENR2     (*(volatile uint32_t *)(RCC_BASE + 0x40UL))
 
     #define RCC_IOPENR_GPIOAEN    (1UL << 0)
+	#define RCC_APBENR2_SYSCFGEN  (1UL << 0)
 
-    #define STM32_OUTPUT_MASK      (1UL << 8)
+    #define GPIOA_BASE      0x50000000UL
+    #define GPIOA_MODER     (*(volatile uint32_t *)(GPIOA_BASE + 0x00))
+    // ?? #define GPIOA_ODR       (*(volatile uint32_t *)(GPIOA_BASE + 0x14))
+	#define GPIOA_BSRR      (*(volatile uint32_t *)(GPIOA_BASE + 0x18UL))
+
+	#define GPIOA_PIN0    (1UL << 0)   	// PA4 - physical pin 4
+	#define GPIOA_PIN8    (1UL << 8)   	// PA5 - physical pin 5
+
+	#define BUTTON_PIN    (1UL << 12)	// PA12 mapped to physical pin 6
+
+	#define SYSCFG_BASE     0x40010000UL
+	#define SYSCFG_CFGR3    (*(volatile uint32_t *)(SYSCFG_BASE + 0x3CUL))
+
+	#define GPIOA_PUPDR     (*(volatile uint32_t *)(GPIOA_BASE + 0x0CUL))
+	#define GPIOA_IDR       (*(volatile uint32_t *)(GPIOA_BASE + 0x10UL))
+
+
+	static void switch_init(void)
+	{
+		// GPIOA clock
+		RCC_IOPENR |= RCC_IOPENR_GPIOAEN;
+
+		// PA5 = input
+		// MODER[11:10] = 00
+		GPIOA_MODER &= ~(3UL << (12 * 2));
+
+		// PA5 = pull-up
+		// PUPDR[11:10] = 01
+		GPIOA_PUPDR &= ~(3UL << (12 * 2));
+		GPIOA_PUPDR |=  (1UL << (12 * 2));
+	}
+
+	static int switch_pressed(void)
+	{
+		return (GPIOA_IDR & BUTTON_PIN) == 0;
+	}
 
 
     static inline void audio_init(void)
     {
-        /*
-         * Enable GPIOA.
-         */
-        RCC_IOPENR |= RCC_IOPENR_GPIOAEN;
+        // Enable GPIOA
+		RCC_IOPENR |= RCC_IOPENR_GPIOAEN;
 
-        /*
-         * PA8 -> general-purpose output.
-         *
-         * MODER8 = 01
-         */
-        GPIOA_MODER &= ~(3UL << 16);
-        GPIOA_MODER |=  (1UL << 16);
+		// Enable SYSCFG clock
+		RCC_APBENR2 |= RCC_APBENR2_SYSCFGEN;
 
-        /*
-         * Start low.
-         */
-        GPIOA_ODR &= ~STM32_OUTPUT_MASK;
+		/*
+		* STM32C011 SO8 physical pin 4:
+		*
+		* PINMUX1[1:0]
+		*
+		* 00 = PF2-NRST
+		* 01 = PA0
+		* 10 = PA1
+		* 11 = PA2
+		*
+		* Select PA0.
+		*/
+		SYSCFG_CFGR3 &= ~(3UL << 2);
+		SYSCFG_CFGR3 |=  (1UL << 2);
+
+		// PA8 = output
+		GPIOA_MODER &= ~(3UL << 16);
+		GPIOA_MODER |=  (1UL << 16);
+
+		// PA0 = output
+		GPIOA_MODER &= ~(3UL << 0);
+		GPIOA_MODER |=  (1UL << 0);
+
+		/* Start with both low */
+		GPIOA_BSRR = (GPIOA_PIN8 << 16) |
+					 (GPIOA_PIN0 << 16);
     }
 
 
     static inline void audio_write(uint8_t value)
     {
-        if (value)
-            GPIOA_ODR |= STM32_OUTPUT_MASK;
-        else
-            GPIOA_ODR &= ~STM32_OUTPUT_MASK;
+#ifdef USE_COMPLEMENTARY_OUTPUT
+		if (value)
+		{
+			// Pin 5 PA8 = HIGH, pin 4 PA0 = LOW
+			GPIOA_BSRR = GPIOA_PIN8 |
+						 (GPIOA_PIN0 << 16);
+		}
+		else
+		{
+			// Pin 5 PA8 = LOW, pin 4 PA0 = HIGH
+			GPIOA_BSRR = (GPIOA_PIN8 << 16) |
+						 GPIOA_PIN0;
+		}
+#else
+		// Pin 5 PA8 = audio, Pin 4 PA0 remains LOW
+		if (value)
+			GPIOA_BSRR = GPIOA_PIN8;
+		else
+			GPIOA_BSRR = GPIOA_PIN8 << 16;
+#endif
     }
 
 
@@ -152,8 +219,8 @@
     #define audio_write(value) \
         do { PORTB = (value); } while (0)
 
-    #define READ8(p)        pgm_read_byte(&(p))
-    #define READ16(p)       pgm_read_word(&(p))
+    #define READ8(p)        pgm_read_byte((p))
+    #define READ16(p)       pgm_read_word((p))
 
 	#define AVR_PROGMEM PROGMEM
 
@@ -384,7 +451,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 		if(tick_counter-- == 0)
 		{
 			// variable tempo, sets the fastest / smallest possible clock event
-			tick_counter = tick_speed;
+			tick_counter = tick_speed - 175;
 
 			for(uint8_t voice = 0; voice < song_voices; voice++)
 			{
@@ -653,18 +720,17 @@ void uart_init_for_AT(void) {
 
 int main(void)
 {
-#ifdef DEBUG
-    // set clock to 8mhz for atmega328p
-    //CLKPR = _BV(CLKPCE);
-    //CLKPR = _BV(CLKPS0);
+	uint8_t album_idx = 0;
 
-    //uart_init_for_AT();
-#endif
+	// initialize the switch
+	switch_init();
 
 	// initialize output pin
 	audio_init();
 
-	uint8_t album_idx = 0;
+	//while(!switch_pressed()) {
+        //_delay_ms(50);
+	//}
 
 	//printf("Total tracks: %d\n", TOTAL_TRACKS);
 
