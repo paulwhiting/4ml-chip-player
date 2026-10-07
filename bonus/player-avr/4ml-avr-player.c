@@ -43,6 +43,9 @@
  */
 
 #if defined(STM32C011)
+	#include "stm32c011xx.h"
+
+	#define CPU_CLOCK_HZ 12000000UL
 
     /*
      * STM32C011J6M6
@@ -60,6 +63,7 @@
      * independent hardware PWM channels.
      */
 
+/*
     #define RCC_BASE        0x40021000UL
     #define RCC_IOPENR      (*(volatile uint32_t *)(RCC_BASE + 0x34))
 	#define RCC_APBENR2     (*(volatile uint32_t *)(RCC_BASE + 0x40UL))
@@ -67,51 +71,271 @@
     #define RCC_IOPENR_GPIOAEN    (1UL << 0)
 	#define RCC_APBENR2_SYSCFGEN  (1UL << 0)
 
-    #define GPIOA_BASE      0x50000000UL
-    #define GPIOA_MODER     (*(volatile uint32_t *)(GPIOA_BASE + 0x00))
-    // ?? #define GPIOA_ODR       (*(volatile uint32_t *)(GPIOA_BASE + 0x14))
-	#define GPIOA_BSRR      (*(volatile uint32_t *)(GPIOA_BASE + 0x18UL))
+    #define GPIOA->BASE      0x50000000UL
+    #define GPIOA->MODER     (*(volatile uint32_t *)(GPIOA->BASE + 0x00))
+    // ?? #define GPIOA->ODR       (*(volatile uint32_t *)(GPIOA->BASE + 0x14))
+	#define GPIOA->BSRR      (*(volatile uint32_t *)(GPIOA->BASE + 0x18UL))
 
-	#define GPIOA_PIN0    (1UL << 0)   	// PA4 - physical pin 4
-	#define GPIOA_PIN8    (1UL << 8)   	// PA5 - physical pin 5
 
-	#define BUTTON_PIN    (1UL << 12)	// PA12 mapped to physical pin 6
+	//#define BUTTON_PIN    (1UL << 12)	// PA12 mapped to physical pin 6
 
 	#define SYSCFG_BASE     0x40010000UL
 	#define SYSCFG_CFGR3    (*(volatile uint32_t *)(SYSCFG_BASE + 0x3CUL))
 
-	#define GPIOA_PUPDR     (*(volatile uint32_t *)(GPIOA_BASE + 0x0CUL))
-	#define GPIOA_IDR       (*(volatile uint32_t *)(GPIOA_BASE + 0x10UL))
+	#define GPIOA->PUPDR     (*(volatile uint32_t *)(GPIOA->BASE + 0x0CUL))
+	#define GPIOA->IDR       (*(volatile uint32_t *)(GPIOA->BASE + 0x10UL))
+*/
+
+	#define GPIOA_PIN0    (1UL << 0)   	// PA4 - physical pin 4
+	#define GPIOA_PIN8    (1UL << 8)   	// PA5 - physical pin 5
 
 
+////////////////////////////////////////
+////// SWITCH CODE
+//////
+
+// STM32C011J6M6
+// Physical pin 6 = PA12
+// Button connected between PA12 and GND
+// Button is active-low
+//
+// Behavior:
+//   Falling edge -> start press debounce
+//   Press confirmed -> wait for release
+//   Rising edge -> immediately generate button event
+//   After release -> debounce/lockout for 20 ms
+//   After debounce -> ready for next press
+
+#define BUTTON_PIN       12U
+#define BUTTON_MASK      (1UL << BUTTON_PIN)
+#define DEBOUNCE_MS      20U
+
+enum
+{
+    BUTTON_WAITING = 0,
+    BUTTON_DEBOUNCE_PRESS,
+    BUTTON_PRESSED,
+    BUTTON_DEBOUNCE_RELEASE
+};
+
+static volatile uint8_t button_state = BUTTON_WAITING;
+static volatile uint8_t button_timer = 0;
+static volatile uint8_t button_pressed = 0;
+
+
+// Called immediately when the button is released.
+// No debounce delay is added before this function is called.
+static void button_pressed_event(void)
+{
+	// Handle button event here.
+	button_pressed = 1;
+}
+
+
+// Initialize PA12 and EXTI12.
+static void switch_init(void)
+{
+    // Enable GPIOA clock
+    RCC->IOPENR |= RCC_IOPENR_GPIOAEN;
+
+    // Enable SYSCFG clock
+    RCC->APBENR2 |= RCC_APBENR2_SYSCFGEN;
+
+    // PA12 = input
+    GPIOA->MODER &= ~(3UL << (BUTTON_PIN * 2));
+
+    // PA12 = pull-up
+    GPIOA->PUPDR &= ~(3UL << (BUTTON_PIN * 2));
+    GPIOA->PUPDR |=  (1UL << (BUTTON_PIN * 2));
+
+    // EXTI12 source = PA12
+    // EXTI12 is in EXTICR4.
+    // Port A has selection value 0, so clear the field.
+    EXTI->EXTICR[3] &= ~(0xFUL << 0);
+
+    // Initially detect only falling edges.
+    // Falling edge = button pressed.
+    EXTI->RTSR1 &= ~BUTTON_MASK;
+    EXTI->FTSR1 |=  BUTTON_MASK;
+
+    // Clear any stale pending flags.
+    EXTI->RPR1 = BUTTON_MASK;
+    EXTI->FPR1 = BUTTON_MASK;
+
+    // Enable EXTI12 interrupt.
+    EXTI->IMR1 |= BUTTON_MASK;
+
+    // EXTI4..15 share this interrupt vector.
+    NVIC_EnableIRQ(EXTI4_15_IRQn);
+}
+
+
+// Initialize SysTick for a 1 ms interrupt.
+static volatile uint32_t systick_ms = 0;
+
+static void systick_init(void)
+{
+    SysTick->LOAD = (CPU_CLOCK_HZ / 1000UL) - 1UL;
+    SysTick->VAL  = 0UL;
+
+    SysTick->CTRL =
+        SysTick_CTRL_CLKSOURCE_Msk |
+        SysTick_CTRL_TICKINT_Msk   |
+        SysTick_CTRL_ENABLE_Msk;
+}
+
+// EXTI4..15 interrupt handler.
+void EXTI4_15_IRQHandler(void)
+{
+    uint32_t rising_pending;
+    uint32_t falling_pending;
+
+    rising_pending  = EXTI->RPR1;
+    falling_pending = EXTI->FPR1;
+
+    // Clear pending flags.
+    EXTI->RPR1 = rising_pending;
+    EXTI->FPR1 = falling_pending;
+
+    // Falling edge = button pressed.
+    if (falling_pending & BUTTON_MASK)
+    {
+        if (button_state == BUTTON_WAITING)
+        {
+            // Start press debounce.
+            button_state = BUTTON_DEBOUNCE_PRESS;
+            button_timer = DEBOUNCE_MS;
+
+            // Ignore further falling edges while debouncing.
+            EXTI->FTSR1 &= ~BUTTON_MASK;
+        }
+    }
+
+    // Rising edge = button released.
+    if (rising_pending & BUTTON_MASK)
+    {
+        if (button_state == BUTTON_PRESSED)
+        {
+            // The button has just been released.
+            //
+            // Generate the event immediately.
+            button_pressed_event();
+
+            // Now enter release debounce/lockout.
+            button_state = BUTTON_DEBOUNCE_RELEASE;
+            button_timer = DEBOUNCE_MS;
+
+            // Ignore further rising edges during debounce.
+            EXTI->RTSR1 &= ~BUTTON_MASK;
+        }
+    }
+}
+
+void SysTick_Handler(void)
+{
+    systick_ms++;
+
+    if (button_timer == 0U)
+        return;
+
+    button_timer--;
+
+    if (button_timer != 0U)
+        return;
+
+    switch (button_state)
+    {
+        case BUTTON_DEBOUNCE_PRESS:
+            if ((GPIOA->IDR & BUTTON_MASK) == 0U)
+            {
+                button_state = BUTTON_PRESSED;
+
+                // Clear any stale rising-edge pending flag
+                EXTI->RPR1 = BUTTON_MASK;
+
+                // Now allow rising edges (button release)
+                EXTI->RTSR1 |= BUTTON_MASK;
+            }
+            else
+            {
+                // Button bounced back to released
+                button_state = BUTTON_WAITING;
+
+                // Clear any stale falling-edge pending flag
+                EXTI->FPR1 = BUTTON_MASK;
+
+                // Continue waiting for a press
+                EXTI->FTSR1 |= BUTTON_MASK;
+            }
+            break;
+
+        case BUTTON_DEBOUNCE_RELEASE:
+            if ((GPIOA->IDR & BUTTON_MASK) != 0U)
+            {
+                button_state = BUTTON_WAITING;
+
+                // Clear any stale falling-edge pending flag
+                EXTI->FPR1 = BUTTON_MASK;
+
+                // Now allow falling edges (button press)
+                EXTI->FTSR1 |= BUTTON_MASK;
+            }
+            else
+            {
+                // Button bounced back to pressed
+                button_state = BUTTON_PRESSED;
+
+                // Clear any stale rising-edge pending flag
+                EXTI->RPR1 = BUTTON_MASK;
+
+                // Continue waiting for release
+                EXTI->RTSR1 |= BUTTON_MASK;
+            }
+            break;
+
+        default:
+            button_state = BUTTON_WAITING;
+            button_timer = 0U;
+
+            // Clear any stale falling-edge pending flag
+            EXTI->FPR1 = BUTTON_MASK;
+
+            EXTI->FTSR1 |= BUTTON_MASK;
+            break;
+    }
+}
+
+
+/*
 	static void switch_init(void)
 	{
 		// GPIOA clock
-		RCC_IOPENR |= RCC_IOPENR_GPIOAEN;
+		RCC->IOPENR |= RCC_IOPENR_GPIOAEN;
 
 		// PA5 = input
 		// MODER[11:10] = 00
-		GPIOA_MODER &= ~(3UL << (12 * 2));
+		GPIOA->MODER &= ~(3UL << (12 * 2));
 
 		// PA5 = pull-up
 		// PUPDR[11:10] = 01
-		GPIOA_PUPDR &= ~(3UL << (12 * 2));
-		GPIOA_PUPDR |=  (1UL << (12 * 2));
+		GPIOA->PUPDR &= ~(3UL << (12 * 2));
+		GPIOA->PUPDR |=  (1UL << (12 * 2));
 	}
+*/
 
 	static int switch_pressed(void)
 	{
-		return (GPIOA_IDR & BUTTON_PIN) == 0;
+		return (GPIOA->IDR & BUTTON_MASK) == 0;
 	}
 
 
     static inline void audio_init(void)
     {
         // Enable GPIOA
-		RCC_IOPENR |= RCC_IOPENR_GPIOAEN;
+		RCC->IOPENR |= RCC_IOPENR_GPIOAEN;
 
 		// Enable SYSCFG clock
-		RCC_APBENR2 |= RCC_APBENR2_SYSCFGEN;
+		RCC->APBENR2 |= RCC_APBENR2_SYSCFGEN;
 
 		/*
 		* STM32C011 SO8 physical pin 4:
@@ -125,19 +349,19 @@
 		*
 		* Select PA0.
 		*/
-		SYSCFG_CFGR3 &= ~(3UL << 2);
-		SYSCFG_CFGR3 |=  (1UL << 2);
+		SYSCFG->CFGR3 &= ~(3UL << 2);
+		SYSCFG->CFGR3 |=  (1UL << 2);
 
 		// PA8 = output
-		GPIOA_MODER &= ~(3UL << 16);
-		GPIOA_MODER |=  (1UL << 16);
+		GPIOA->MODER &= ~(3UL << 16);
+		GPIOA->MODER |=  (1UL << 16);
 
 		// PA0 = output
-		GPIOA_MODER &= ~(3UL << 0);
-		GPIOA_MODER |=  (1UL << 0);
+		GPIOA->MODER &= ~(3UL << 0);
+		GPIOA->MODER |=  (1UL << 0);
 
 		/* Start with both low */
-		GPIOA_BSRR = (GPIOA_PIN8 << 16) |
+		GPIOA->BSRR = (GPIOA_PIN8 << 16) |
 					 (GPIOA_PIN0 << 16);
     }
 
@@ -148,40 +372,32 @@
 		if (value)
 		{
 			// Pin 5 PA8 = HIGH, pin 4 PA0 = LOW
-			GPIOA_BSRR = GPIOA_PIN8 |
+			GPIOA->BSRR = GPIOA_PIN8 |
 						 (GPIOA_PIN0 << 16);
 		}
 		else
 		{
 			// Pin 5 PA8 = LOW, pin 4 PA0 = HIGH
-			GPIOA_BSRR = (GPIOA_PIN8 << 16) |
+			GPIOA->BSRR = (GPIOA_PIN8 << 16) |
 						 GPIOA_PIN0;
 		}
 #else
 		// Pin 5 PA8 = audio, Pin 4 PA0 remains LOW
 		if (value)
-			GPIOA_BSRR = GPIOA_PIN8;
+			GPIOA->BSRR = GPIOA_PIN8;
 		else
-			GPIOA_BSRR = GPIOA_PIN8 << 16;
+			GPIOA->BSRR = GPIOA_PIN8 << 16;
 #endif
     }
 
-
-	static inline void stm32_delay_ms(uint32_t ms)
+	static void stm32_delay_ms(uint32_t ms)
 	{
-		/*
-		 * STM32C011 running from HSI48.
-		 *
-		 * This is only used for the occasional long delay, not
-		 * for generating the music waveform.
-		 */
-		while (ms--)
-		{
-			for (volatile uint32_t i = 0; i < 8000; i++)
-			{
-				__asm volatile ("nop");
-			}
-		}
+	    uint32_t start = systick_ms;
+
+	    while ((uint32_t)(systick_ms - start) < ms)
+	    {
+		/* wait */
+	    }
 	}
 
 	#define _delay_ms(ms) stm32_delay_ms((uint32_t)(ms))
@@ -394,7 +610,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 		//loop_point       [MAXLOOPS][MAX_VOICES],
 	}
 
-	while(1)
+	while(!button_pressed)
 	{
 		/**********************
 		 *  Synthesizer Code  *
@@ -440,7 +656,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 				}
 				sample_counter = SAMPLE_SPEED;
 			}
-        }
+		}
 		audio_write(0);
 
 
@@ -680,6 +896,10 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 			}
 		}
 	}
+
+	button_pressed = 0;
+
+	return 0;
 }
 
 /*******************************************************************************/
@@ -695,26 +915,26 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 
 // Function to transmit a character
 int uart_putchar(char c, FILE *stream) {
-    if (c == '\n') {
-        uart_putchar('\r', stream); // Add carriage return for newlines
-    }
-    // Wait for the transmit buffer to be empty (specific register names vary by model)
-    // For general ATtiny, this part must be a software serial implementation
-    loop_until_bit_is_set(UCSR0A, UDRE0); 
-    UDR0 = c; // Put character in transmit buffer
-    return 0;
+	if (c == '\n') {
+		uart_putchar('\r', stream); // Add carriage return for newlines
+	}
+	// Wait for the transmit buffer to be empty (specific register names vary by model)
+	// For general ATtiny, this part must be a software serial implementation
+	loop_until_bit_is_set(UCSR0A, UDRE0); 
+	UDR0 = c; // Put character in transmit buffer
+	return 0;
 }
 
 // Setup the standard output stream to use uart_putchar
 FILE output = FDEV_SETUP_STREAM(uart_putchar, NULL, _FDEV_SETUP_WRITE);
 
 void uart_init_for_AT(void) {
-    // Hardware UART init (if available, e.g., ATtiny1634)
-    UBRR0H = UBRRH_VALUE;
-    UBRR0L = UBRRL_VALUE;
-    UCSR0C = (1 << UCSZ01) | (1 << UCSZ00); // 8-bit data
-    UCSR0B = (1 << TXEN0); // Enable TX
-    stdout = &output; // Redirect stdout
+	// Hardware UART init (if available, e.g., ATtiny1634)
+	UBRR0H = UBRRH_VALUE;
+	UBRR0L = UBRRL_VALUE;
+	UCSR0C = (1 << UCSZ01) | (1 << UCSZ00); // 8-bit data
+	UCSR0B = (1 << TXEN0); // Enable TX
+	stdout = &output; // Redirect stdout
 }
 #endif
 
@@ -725,6 +945,9 @@ int main(void)
 	// initialize the switch
 	switch_init();
 
+	// initilize systick
+	systick_init();
+
 	// initialize output pin
 	audio_init();
 
@@ -734,10 +957,12 @@ int main(void)
 
 	//printf("Total tracks: %d\n", TOTAL_TRACKS);
 
-	for(; album_idx < TOTAL_TRACKS; album_idx++)
-	{
-		play_song(TRACK_VOICES[album_idx], TRACK_OFFSET[album_idx]);
-        _delay_ms(1500);
+	while(1) {
+		for(album_idx = 0; album_idx < TOTAL_TRACKS; album_idx++)
+		{
+			play_song(TRACK_VOICES[album_idx], TRACK_OFFSET[album_idx]);
+			_delay_ms(1500);
+		}
 	}
 
 	return 0;

@@ -9,7 +9,7 @@ default:
 %.4ml: %.mid
 	cp "$<" tmp-input.4ml
 	. venv/bin/activate && python3 compiler/midi-to-4ml.py tmp-input.4ml > "$@"
-	cp "$@" `basename "$@"` || true
+	#cp "$@" "`basename '$@'`" || true
 
 %.min.4ml: %.4ml
 	python3 compiler/4ml-extract-patterns.py "$<" > "$@"
@@ -25,7 +25,7 @@ default:
 	python3 compiler/compiler.py --avr "$<" > "$@"
 
 #album.4ml.avr.h: zelda.4ml z2-title.4ml z2-palace.4ml bonus/player-avr/songs/ninjagaiden.4ml bonus/player-avr/songs/wizards-and-warriors-intro.4ml mario.min.4ml
-album.4ml.avr.h: bonus/player-avr/songs/ninjagaiden.4ml bonus/player-avr/songs/wizards-and-warriors-intro.4ml
+album.4ml.avr.h: bonus/player-avr/songs/ninjagaiden.min.4ml bonus/player-avr/songs/wizards-and-warriors-intro.min.4ml songs/Tatakai_no_Banka_08_Song_8_v1.reduced.min.4ml songs/enter-samus.min.4ml songs/brinstar.min.4ml songs/kraids-hideout.min.4ml songs/attiny/mario-v16.4ml songs/attiny/smb-2.min.4ml songs/Wii_Channels_-_Mii_Channel.reduced.4ml songs/attiny/never.min.4ml
 	python3 compiler/compiler.py --avr $^ > "$@"
 
 album2.4ml.avr.h: n-a-z.4ml bonus/player-avr/songs/ninjagaiden.4ml
@@ -87,7 +87,9 @@ CFLAGS = \
 	-fno-builtin \
 	-Wall \
 	-Wextra \
-	-DSTM32C011
+	-DSTM32C011 \
+	-I cmsis-device-c0/Include \
+	-I CMSIS_5/CMSIS/Core/Include
 
 LDFLAGS = \
 	--target=arm-none-eabi \
@@ -112,13 +114,20 @@ stm32c011-startup.o: stm32c011-startup.s
 #	$(CC) $(LDFLAGS) main.o startup.o -o $@
 #	$(SIZE) $@
 
-%.st.bin: %.4ml.avr.h bonus/player-avr/4ml-avr-player.c stm32c011-startup.o
+cmsis-device-c0:
+	git clone --depth 1 --filter=blob:none --sparse https://github.com/STMicroelectronics/cmsis-device-c0.git
+	
+CMSIS_5:
+	git clone --depth 1 --filter=blob:none https://github.com/ARM-software/CMSIS_5.git
+
+%.st.bin: %.4ml.avr.h bonus/player-avr/4ml-avr-player.c stm32c011-startup.o cmsis-device-c0 CMSIS_5
 	cp "$<" bonus/player-avr/4ml-data.h
 	$(CC) $(CFLAGS) $(LDFLAGS) stm32c011-startup.o -o "$@" bonus/player-avr/4ml-avr-player.c
-	$(SIZE) $@
+	#$(CC) $(CFLAGS) $(LDFLAGS) stm32c011-startup.o -o "$@" bonus/player-avr/tim_voice.c
+	$(SIZE) "$@"
 
 %.st.hex: %.st.bin
-	$(OBJCOPY) -O ihex $< $@
+	$(OBJCOPY) -O ihex "$<" "$@"
 
 clean:
 	rm -f *.o *.elf *.bin
