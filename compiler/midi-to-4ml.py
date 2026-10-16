@@ -166,7 +166,6 @@ def process_midi_file(midi_file_path):
 
 	# track position
 	total_128th_notes = 0
-	total_ticks = 0
 	current_bar = 0
 
 	# array to store the MIDI data
@@ -182,16 +181,14 @@ def process_midi_file(midi_file_path):
 	if debug:
 		print(f'ticks_per_beat: {midi_file.ticks_per_beat}')
 
-	for track in midi_file.tracks:
+	for track_index, track in enumerate(midi_file.tracks):
 		current_time = 0
 
 		for msg in track:
 			if debug:
 				print(msg)
-			if not msg.is_meta:
-				current_time += msg.time
-				total_ticks  += msg.time
 
+			current_time += msg.time
 			current_time_q = quantize_ticks(current_time, midi_file.ticks_per_beat)
 
 			if msg.type == 'set_tempo':
@@ -201,9 +198,9 @@ def process_midi_file(midi_file_path):
 				# check for overlapping notes
 
 				# use sub-channels for overlapping notes
-				orig_channel = msg.channel
+				orig_channel = f"{track_index}-{msg.channel}"
 				sub_channel = 0
-				the_channel = msg.channel
+				the_channel = orig_channel
 				if SUB_CHANNELS:
 					while the_channel in active_notes:
 						#print(f'Preventing Concern: {the_channel} in {active_notes}\n',file=sys.stderr)
@@ -214,7 +211,7 @@ def process_midi_file(midi_file_path):
 				is_percussion = (msg.channel == GM_PERCUSSION_CHANNEL and 
 								 PERCUSSION_NOTE_MIN <= msg.note <= PERCUSSION_NOTE_MAX)
 				if is_percussion:
-					percussion_channels[orig_channel] = True
+					percussion_channels[msg.channel] = True
 
 				if the_channel in active_notes:
 					print(f'Concern: {the_channel} in {active_notes}\n',file=sys.stderr)
@@ -260,15 +257,16 @@ def process_midi_file(midi_file_path):
 
 			elif msg.type == 'note_off' or (msg.type == 'note_on' and msg.velocity == 0):
 
-				the_channel = msg.channel
+				orig_channel = f"{track_index}-{msg.channel}"
+				the_channel = orig_channel
 
 				# find the active note, possibly in a sub-channel
 				if SUB_CHANNELS:
-					if msg.channel in active_notes and active_notes[msg.channel][0] == msg.note:
-						the_channel = msg.channel
+					if orig_channel in active_notes and active_notes[orig_channel][0] == msg.note:
+						the_channel = orig_channel
 					else:
 						for channel in active_notes:
-							if str(channel).startswith(f"{msg.channel}-"):
+							if str(channel).startswith(f"{orig_channel}-"):
 								if active_notes[channel][0] == msg.note:
 									the_channel = channel
 									break
@@ -318,7 +316,8 @@ def process_midi_file(midi_file_path):
 		channel_details = {}
 		channel_data = ""
 
-		midi_data.sort(key=lambda x: x[0])
+		# sort by channel name
+		midi_data.sort(key=lambda x: (x[0]))
 
 		for i, item in enumerate(midi_data):
 			mml_channel		  = item[0]
@@ -335,8 +334,8 @@ def process_midi_file(midi_file_path):
 				channel_data += f'{bcolors.WARNING}C{total_channels} {bcolors.ENDC}'
 				
 				# add x command if this is a percussion channel
-				# get the base MIDI channel number (handle sub-channels like "9-1" -> 9)
-				base_channel = int(mml_channel.split('-')[0])
+				# get the base MIDI channel number (format is now "track_index-channel-subchannel")
+				base_channel = int(mml_channel.split('-')[1])
 				if base_channel in percussion_channels:
 					channel_data += f'x'
 
