@@ -29,6 +29,19 @@
 
 #include <stdint.h>
 
+
+#define MUSIC_CLOCK_MULTIPLIER  4
+
+#if MUSIC_CLOCK_MULTIPLIER == 1
+    #define CPU_CLOCK_HZ 12000000UL
+#elif MUSIC_CLOCK_MULTIPLIER == 2
+    #define CPU_CLOCK_HZ 24000000UL
+#elif MUSIC_CLOCK_MULTIPLIER == 4
+    #define CPU_CLOCK_HZ 48000000UL
+#else
+    #error "Unsupported MUSIC_CLOCK_MULTIPLIER"
+#endif
+
 // differential drive
 #define USE_COMPLEMENTARY_OUTPUT 1
 
@@ -45,7 +58,7 @@
 #if defined(STM32C011)
 	#include "stm32c011xx.h"
 
-	#define CPU_CLOCK_HZ 12000000UL
+	//#define CPU_CLOCK_HZ 12000000UL
 
     /*
      * STM32C011J6M6
@@ -88,6 +101,44 @@
 
 	#define GPIOA_PIN0    (1UL << 0)   	// PA4 - physical pin 4
 	#define GPIOA_PIN8    (1UL << 8)   	// PA5 - physical pin 5
+
+
+static void clock_init(void)
+{
+    /* HSI source = 48 MHz.
+       Select SYSCLK: 12, 24, or 48 MHz. */
+
+    RCC->CR |= RCC_CR_HSION;
+
+    while ((RCC->CR & RCC_CR_HSIRDY) == 0)
+        ;
+
+#if MUSIC_CLOCK_MULTIPLIER == 1
+    /* 48 MHz / 4 = 12 MHz */
+    #define STM32_HSI_DIV_VALUE 2UL
+#elif MUSIC_CLOCK_MULTIPLIER == 2
+    /* 48 MHz / 2 = 24 MHz */
+    #define STM32_HSI_DIV_VALUE 1UL
+#elif MUSIC_CLOCK_MULTIPLIER == 4
+    /* 48 MHz / 1 = 48 MHz */
+    #define STM32_HSI_DIV_VALUE 0UL
+#else
+    #error "Unsupported MUSIC_CLOCK_MULTIPLIER"
+#endif
+
+    RCC->CR =
+        (RCC->CR & ~RCC_CR_HSIDIV) |
+        (STM32_HSI_DIV_VALUE << RCC_CR_HSIDIV_Pos);
+
+    /* Select HSI as SYSCLK. */
+    RCC->CFGR =
+        (RCC->CFGR & ~RCC_CFGR_SW) |
+        0UL;
+
+    /* Wait for the system clock switch to complete. */
+    while ((RCC->CFGR & RCC_CFGR_SWS) != 0)
+        ;
+}
 
 
 ////////////////////////////////////////
@@ -450,7 +501,7 @@ void SysTick_Handler(void)
 #endif
 
 // stuff you shouldn't really mess with
-#define SAMPLE_SPEED   5    // the sampler playback rate
+#define SAMPLE_SPEED   (5 * MUSIC_CLOCK_MULTIPLIER)   // the sampler playback rate
 #define SAMPLE_LENGTH  127  // the length of the sample array
 #define MAXLOOPS       5    // the maximum number of nested loops
 
@@ -473,13 +524,15 @@ void SysTick_Handler(void)
 
 // throw a compile-time error if the 4ML data isn't AVR compatible
 
+#define MCM(x) (x * MUSIC_CLOCK_MULTIPLIER)
+
 // note table (times 4 to compensate for octave nibble+1 encoding)
 const uint16_t note[13] = 
 {
 	// the rest command is technically note 0 and thus requires a frequency 
 	255,
 	// one octave of notes, equal temperament in Gb (multiplied by 4)
-	4096,3868,3648,3444,3252,3068,2896,2732,2580,2436,2300,2168
+	MCM(4096),MCM(3868),MCM(3648),MCM(3444),MCM(3252),MCM(3068),MCM(2896),MCM(2732),MCM(2580),MCM(2436),MCM(2300),MCM(2168)
 };
 
 // location of individual samples in sample array
@@ -538,12 +591,14 @@ uint8_t  song_voices;
 
 // channel variables (grouped in arrays)
 uint8_t  out              [MAX_VOICES],
-		 octave           [MAX_VOICES],
-		 length           [MAX_VOICES],
-		 volume           [MAX_VOICES],
-		 loops_active     [MAX_VOICES],
-		 is_percussion    [MAX_VOICES],
-		 instrument       [MAX_VOICES];
+	octave           [MAX_VOICES],
+	length           [MAX_VOICES],
+	volume           [MAX_VOICES],
+	loops_active     [MAX_VOICES],
+	is_percussion    [MAX_VOICES],
+	instrument       [MAX_VOICES];
+
+int8_t	octave_transpose_adjust [MAX_VOICES];
 
 uint16_t data_pointer     [MAX_VOICES],
 		 waveform         [MAX_VOICES],
@@ -580,7 +635,11 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 
 	// main timer variables
 	uint16_t tick_counter    = 0,
-	         tick_speed      = 1024; // default tempo
+	         tick_speed      = 1000 * MUSIC_CLOCK_MULTIPLIER; // default tempo
+
+	int8_t transpose = 0;
+	int8_t transpose_note_offset = 0;
+	int8_t transpose_octave_offset = 0;
 
 	/* Set each channel's data pointer to that channel's data location in the core data array.
 	 * Initialize each channel's frequencies. By default they're set to zero which causes out of
@@ -595,7 +654,8 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 
 		frequency[i]       = 255; // random frequency (won't ever be sounded)
 		volume[i]          = 1;
-		octave[i]          = 3;   // default octave : o3
+		octave[i]          = 1 << 3;   // default octave : o3
+		octave_transpose_adjust[i] = 0;
 		is_percussion[i]   = 0;   // default: not percussion
 		out[i]             = 0;
 		length[i]          = 0;
@@ -619,11 +679,23 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 		/* Port changes (the demarcated 'output' commands) are carefully interleaved with
 		 * generation code to balance volume of outputs. */
 
-        /* One branch per voice: out = (pitch_counter < waveform) ? high : 0 */
-        for(uint8_t voice = 0; voice < song_voices; voice++) {
+		/* One branch per voice: out = (pitch_counter < waveform) ? high : 0 */
+		for(uint8_t voice = 0; voice < song_voices; voice++) {
+
 			if (is_percussion[voice] == 0) {
 				audio_write(out[voice]);
-				pitch_counter[voice] += octave[voice];
+				if (transpose) {
+					int8_t correct = transpose_octave_offset + octave_transpose_adjust[voice];
+					if (correct > 0) {
+						pitch_counter[voice] += (octave[voice] << correct);
+					} else {
+						pitch_counter[voice] += (octave[voice] >> (-correct));
+					}
+				}
+				else
+				{
+					pitch_counter[voice] += octave[voice];
+				}
 				if(pitch_counter[voice] >= frequency[voice])
 					pitch_counter[voice] -= frequency[voice];
 				out[voice] = (pitch_counter[voice] < waveform[voice]) ? (1 << OUTPUT) : 0;
@@ -657,7 +729,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 				sample_counter = SAMPLE_SPEED;
 			}
 		}
-		audio_write(0);
+		//audio_write(0);
 
 
 		/**************************
@@ -667,7 +739,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 		if(tick_counter-- == 0)
 		{
 			// variable tempo, sets the fastest / smallest possible clock event
-			tick_counter = tick_speed - 175;
+			tick_counter = tick_speed;
 
 			for(uint8_t voice = 0; voice < song_voices; voice++)
 			{
@@ -724,7 +796,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 						// tempo
 						else if(buffer2 == CMD_FN_TEMPO)
 						{
-							tick_speed = buffer3 << 4;
+							tick_speed = (buffer3 << 4) * MUSIC_CLOCK_MULTIPLIER;
 							/* // for testing tempos...
 							switch (song_voices) {
 								case 1:
@@ -740,8 +812,11 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 							data_pointer[voice] += 2;
 						}
 
-						// transpose (currently unused)
+						// transpose (affects all channels)
 						else if(buffer2 == CMD_FN_TRANSPOSE) {
+							transpose = (int8_t) buffer3;  // buffer3 is the transpose step as a signed int8
+							transpose_octave_offset = transpose / 12;  // 12 half steps in an octave
+							transpose_note_offset   = transpose % 12;
 							data_pointer[voice] += 2; // skip data
 						}
 
@@ -828,7 +903,23 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 					if(buffer1 != CMD_REST && buffer1 < CMD_OCTAVE)
 					{
 						if (is_percussion[voice] == 0) {
-							//buffer4 = READ16(&note[buffer1]);
+							// for transposing, 
+							if (transpose) {
+								// 0 rest, 1 c, 2 c+, 3 d, 4 d+, 5 e, 6 f, 7 f+, 8 g, 9 g+, 10 a, 11 a+, 12 b
+								int8_t adjusted_note = buffer1 + transpose_note_offset;
+								if (adjusted_note > 12) {
+									octave_transpose_adjust[voice] = 1;
+									buffer1 = adjusted_note - 12;
+								}
+								else if (adjusted_note < 1) {
+									octave_transpose_adjust[voice] = -1;
+									buffer1 = adjusted_note + 12;
+								}
+								else {
+									octave_transpose_adjust[voice] = 0;
+								}
+							}
+							
 							buffer4 = note[buffer1];
 							frequency[voice] = buffer4;
 
@@ -897,9 +988,10 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 		}
 	}
 
+	uint8_t retval = button_pressed;
 	button_pressed = 0;
 
-	return 0;
+	return retval;
 }
 
 /*******************************************************************************/
@@ -942,6 +1034,8 @@ int main(void)
 {
 	uint8_t album_idx = 0;
 
+	clock_init();
+
 	// initialize the switch
 	switch_init();
 
@@ -960,8 +1054,10 @@ int main(void)
 	while(1) {
 		for(album_idx = 0; album_idx < TOTAL_TRACKS; album_idx++)
 		{
-			play_song(TRACK_VOICES[album_idx], TRACK_OFFSET[album_idx]);
-			_delay_ms(1500);
+			uint8_t pressed = play_song(TRACK_VOICES[album_idx], TRACK_OFFSET[album_idx]);
+			if (!pressed) {
+				_delay_ms(1500);
+			}
 		}
 	}
 
