@@ -7,6 +7,7 @@ reduced 4ML to stdout and statistics to stderr.
 See docs/4ml.md for 4ML syntax. Duration units: 128ths of a whole note.
 """
 
+import json
 import re
 import sys
 from dataclasses import dataclass, field
@@ -27,7 +28,37 @@ DEFAULT_VOLUME = "1"
 DEFAULT_TEMPO = 64
 DEFAULT_INSTRUMENT = 1
 NOTE_NAMES = ("c", "c+", "d", "d+", "e", "e+", "f", "f+", "g", "g+", "a", "a+", "b", "b+")
-NOTE_SEMITONES = {name: i for i, name in enumerate(NOTE_NAMES)}  # c=0..b+=11
+NOTE_SEMITONES = {name: i for i, name in enumerate(NOTE_NAMES)}  # c=0..b+=13
+
+## tempos - track tempo globally
+tempos = {}
+
+
+##### note conversion for transpose
+NOTES = [ "c", "c+", "d", "d+", "e", "f", "f+", "g", "g+", "a", "a+", "b" ]
+NOTE_TO_OFFSET = {note: i for i, note in enumerate(NOTES)}
+
+def to_note_number(octave: int, note: str) -> int:
+	"""Convert an octave and note name to an absolute note number."""
+	note = note.lower()
+
+	if note not in NOTE_TO_OFFSET:
+		raise ValueError(f"Invalid note: {note}")
+
+	return octave * 12 + NOTE_TO_OFFSET[note]
+
+def from_note_number(number: int) -> tuple[int, str]:
+	"""Convert an absolute note number to an octave and note name."""
+	octave, offset = divmod(number, 12)
+	return octave, NOTES[offset]
+
+# Examples
+#number = to_note_number(3, "c+")
+#print(number)	# 37
+#octave, note = from_note_number(37)
+#print(octave, note)  # 3 c+
+
+##### end note conversion for transpose
 
 
 @dataclass
@@ -37,7 +68,6 @@ class NoteEvent:
 	dur_128: int
 	octave: int
 	volume: int
-	tempo: int
 	instrument: int
 	note: str  # e.g. 'c', 'c+', 'd', ...
 	percussion: bool = False
@@ -149,29 +179,44 @@ def parse_sequence_to_events(seq: str) -> list[NoteEvent]:
 			continue
 
 		# support previous duration
+		#print(token)
+		#print(tempo)
 		result = process_mmml_string(token, previous_duration=prev_duration, octave=octave, volume=volume, tempo=tempo, instrument=instrument)
+		#print(result)
 
+		# token is something like c+4&c+8
 		c = token[0]
 
+		octave = result['octave']
+		volume = result['volume']
+		instrument = result['instrument']
+
+		# track tempo 
+		if c == 't':
+			tempo = result['tempo']
+			if tick in tempos and tempos[tick] != tempo:
+				raise ValueError(f"Conflicting tempos at tick {tick}:  {tempos[tick]} != {tempo}")
+			tempos[tick] = tempo
+			continue
+
+		# if it's a rest then handle and continue
 		if c == 'r':
 			tick += result['ticks']
 			continue
 
-		octave = result['octave']
-		volume = result['volume']
-		tempo = result['tempo']
-		instrument = result['instrument']
-
 		# Note or rest
 		if c in "cdefgab":
+			if len(token) > 1 and token[1] == '+':
+				note = c + '+'
+			else:
+				note = c
 			duration = result['ticks']
 			events.append(NoteEvent(
 				start_128=tick,
 				dur_128=duration,
 				octave=octave,
 				volume=volume,
-				note=token,
-				tempo=tempo,
+				note=note,
 				instrument=instrument,
 				percussion=percussion
 			))
@@ -189,7 +234,7 @@ def collect_all_notes(channel_events: list[list[NoteEvent]]) -> list[NoteEvent]:
 		for ev in events:
 			key = ev.duplicate_key()
 			if key not in seen:
-				seen.add(key)
+				#seen.add(key)
 				out.append(ev)
 	return out
 
@@ -244,56 +289,76 @@ def ticks_to_duration_str(tick: int) -> str:
 	return "8"
 
 
-def events_to_4ml_channel(events: list[NoteEvent], target_length: Optional[int] = None) -> str:
+def events_to_4ml_channel(events: list[NoteEvent], target_length: Optional[int] = None, transpose: Optional[int] = 0) -> str:
 	"""Serialize one channel's events to 4ML string (with rests for gaps)."""
 	if not events:
 		return f"r1"
 	parts = []
 	cur_tick = 0
-	octave = DEFAULT_OCTAVE
+	octave = -9999
 	volume = DEFAULT_VOLUME
 	# TODO: tempo is a global value, not separate per channel like we do here
 	tempo = DEFAULT_TEMPO
 	instrument = DEFAULT_INSTRUMENT
 	percussion = False
 	for n in sorted(events, key=lambda e: e.start_128):
+
+		if cur_tick in tempos:
+			parts.append(f"t{tempos[cur_tick]}")
+
+		# if transposing, only transpose non-percussion notes
+		if transpose and not percussion:
+			#print(f"before {n.octave} {n.note}")
+			n.octave, n.note = from_note_number(to_note_number(n.octave, n.note) + transpose)
+			#print(f"after {n.octave} {n.note}")
+
+		# if the note doesn't start until later, add in a rest
 		if n.start_128 > cur_tick:
 			d = decompose_notes(n.start_128 - cur_tick)
-			parts.append('r' + 'r'.join(d))
+			parts.append('r' + '&r'.join(d))
 			cur_tick = n.start_128
+
+		# if the octave/volume/tempo/instrument/percussion is not the same, then emit the corresponding command
 		if n.octave != octave:
 			parts.append(f"o{n.octave}")
 			octave = n.octave
 		if n.volume != volume:
 			parts.append(f"v{n.volume}")
 			volume = n.volume
-		if n.tempo != tempo:
-			parts.append(f"t{n.tempo}")
-			tempo = n.tempo
 		if n.instrument != instrument:
 			parts.append(f"@{n.instrument}")
 			instrument = n.instrument
 		if n.percussion != percussion:
 			parts.append('x' if n.percussion else 'x0')
 			percussion = n.percussion
-		parts.append(n.note)
+
+		d = decompose_notes(n.dur_128)
+		parts.append(n.note + f'&{n.note}'.join(d))
 		cur_tick = n.start_128 + n.dur_128
 
 	# Pad to target length if specified
 	if target_length is not None and cur_tick < target_length:
 		d = decompose_notes(target_length - cur_tick)
-		parts.append('r' + 'r'.join(d))
+		parts.append('r' + '&r'.join(d))
 
 	return " ".join(parts)
 
 
 def main() -> None:
 	if len(sys.argv) < 2:
-		log("Usage: 4ml-reduce-channels.py <file.4ml>")
+		log("Usage: 4ml-reduce-channels.py <file.4ml> (transpose)")
 		sys.exit(1)
 
 	path = sys.argv[1]
 	data = parse_4ml_file(path)
+
+	if len(sys.argv) >= 3:
+		transpose = int(sys.argv[2])
+	else:
+		transpose = 0
+
+	#print(json.dumps(data["channels"]))
+	#exit(0)
 
 	channel_strings = data["channels"]
 	pattern_data = data["patterns"]
@@ -324,7 +389,7 @@ def main() -> None:
 
 	# Output reduced 4ML to stdout
 	for i, ch_events in enumerate(packed):
-		print(f"C{i + 1} {events_to_4ml_channel(ch_events, max_length)}")
+		print(f"C{i + 1} {events_to_4ml_channel(ch_events, max_length, transpose)}")
 	if not packed:
 		print("C1 r1")
 

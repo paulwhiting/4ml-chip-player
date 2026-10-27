@@ -224,7 +224,7 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 
 	# lookup tables so we can keep all the definitions in one place
 	command_lookup = {
-		'r': 0x00, 'c': 0x01, 'c+':0x02, 'd': 0x03, 'd+':0x04, 'e': 0x05, 'e+':0x06, 'f': 0x06,
+		'r': 0x00, 'r+': 0x00, 'c': 0x01, 'c+':0x02, 'd': 0x03, 'd+':0x04, 'e': 0x05, 'e+':0x06, 'f': 0x06,
 		'f+':0x07, 'g': 0x08, 'g+':0x09, 'a': 0x0A, 'a+':0x0B, 'b': 0x0C, 'b+':0x01, 'o': 0x0D,
 		'v': 0x0E, 'p': 0xF2, 't': 0xF3, '@': 0xF5, 'i': 0xF5, '[': 0xF0, ']': 0xF1, '&': 0xF6,
 		'^': 0xF6, 'K': 0xF4, 's': 0xF7, 'F': 0xFE, 'x': 0xF8
@@ -500,7 +500,8 @@ def process_mmml_string(input_string, output_end_channel_byte = False, previous_
 				if function_byte > 100 or function_byte < -100 :
 					raise CompilerValueError(f"Command '{current_char}' is {function_byte}, must be -100 - 100.")
 				else:
-					function_byte += 100 + 1
+					#function_byte += 100 + 1
+					function_byte = (function_byte & 0xFF) + 1
 			# other values cannot be negative
 			elif function_byte < 0:
 				raise CompilerValueError(f"Command '{current_char}' is {function_byte}, must be 1 - 256.")
@@ -608,6 +609,8 @@ def parse_4ml_file(input_file):
 	# remove comments
 	s = re.sub(r";.*?(?=\n|$)", "\n", s)
 	s = re.sub(r"/\*[\s\S]*?\*/", "", s)
+	# mmml comments (%)
+	s = re.sub(r"%.*?(?=\n|$)", "\n", s)
 
 	# remove whitespace
 	s = re.sub(r"\s+", "", s)
@@ -712,10 +715,14 @@ def main():
 		# write to output file
 
 		print("\n/*\n\ttrack list:")
+		total_track_bytes = 0
 		for track in album:
 			hlen = 2*len(track['header'])
 			dlen = sum([len(t) for t in track['data']])
+			total_track_bytes += hlen + dlen
 			print(f"\t {hlen} + {dlen} = {hlen+dlen} bytes - {track['file']}")
+
+		print(f"\n\tTotal: {total_track_bytes} bytes")
 		print("*/\n")
 
 		print(f"#define TOTAL_TRACKS {len(album)}")

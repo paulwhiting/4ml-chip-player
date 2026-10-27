@@ -1,45 +1,44 @@
-
 /*H*****************************************************************************
-*  FILENAME:     4ml-avr-player.c
+*  FILENAME:	 4ml-avr-player.c
 *  DESCRIPTION:  Mega Micro Music Macro Language (4ML) Player for AVR
-*                microcontrollers.
+*				 microcontrollers.
 *
-*  NOTES:        To be compiled with AVR C.
+*  NOTES:		 To be compiled with AVR C.
 *
-*                Make sure you include exactly 4 channels worth of material.
+*				 Make sure you include exactly 4 channels worth of material.
 *
-*                A four-channel MML inspired 1-bit music player. Three channels
-*                of harmonic pulse wave and a percussive sampler or noise
-*                generator.
+*				 A four-channel MML inspired 1-bit music player. Three channels
+*				 of harmonic pulse wave and a percussive sampler or noise
+*				 generator.
 *
-*                Eight different duty cycles possible:
-*                50%, 25%, 12.5%, 6.25%, 3.125%, 1.5625%, 0.78125% and 0.390625%
+*				 Eight different duty cycles possible:
+*				 50%, 25%, 12.5%, 6.25%, 3.125%, 1.5625%, 0.78125% and 0.390625%
 *
-*                The 'thinner' pulse widths are perceived as a change in
-*                waveform power (volume) as opposed to a change in timbre.
+*				 The 'thinner' pulse widths are perceived as a change in
+*				 waveform power (volume) as opposed to a change in timbre.
 *
-*                Tested on:
-*                  * Attiny13/45/85 @ 8MHz
-*                  * Atmega168/328  @ 8MHz
+*				 Tested on:
+*				   * Attiny13/45/85 @ 8MHz
+*				   * Atmega168/328	@ 8MHz
 *
-*  AUTHOR:       Blake 'PROTODOME' Troise
-*  DATE:         20th December 2017 (Original)
-*                28th January 2024 (Update)
+*  AUTHOR:		 Blake 'PROTODOME' Troise
+*  DATE:		 20th December 2017 (Original)
+*				 28th January 2024 (Update)
 *****************************************************************************H*/
 
 #include <stdint.h>
 
 
-#define MUSIC_CLOCK_MULTIPLIER  4
+#define MUSIC_CLOCK_MULTIPLIER	4
 
 #if MUSIC_CLOCK_MULTIPLIER == 1
-    #define CPU_CLOCK_HZ 12000000UL
+	#define CPU_CLOCK_HZ 12000000UL
 #elif MUSIC_CLOCK_MULTIPLIER == 2
-    #define CPU_CLOCK_HZ 24000000UL
+	#define CPU_CLOCK_HZ 24000000UL
 #elif MUSIC_CLOCK_MULTIPLIER == 4
-    #define CPU_CLOCK_HZ 48000000UL
+	#define CPU_CLOCK_HZ 48000000UL
 #else
-    #error "Unsupported MUSIC_CLOCK_MULTIPLIER"
+	#error "Unsupported MUSIC_CLOCK_MULTIPLIER"
 #endif
 
 // differential drive
@@ -60,84 +59,116 @@
 
 	//#define CPU_CLOCK_HZ 12000000UL
 
-    /*
-     * STM32C011J6M6
-     *
-     * Physical pin 5 = PA8 = TIM1_CH1
-     */
+	/*
+	 * STM32C011J6M6
+	 *
+	 * Physical pin 5 = PA8 = TIM1_CH1
+	 */
 
-    #define OUTPUT 0
+	#define OUTPUT 0
 
-    /*
+	/*
 	 * We use PA8 as a normal GPIO output for the 1-bit synthesizer.
-     *
-     * This is intentional: the 4ML engine produces a rapidly changing
-     * 1-bit waveform. We are NOT converting the three voices into
-     * independent hardware PWM channels.
-     */
+	 *
+	 * This is intentional: the 4ML engine produces a rapidly changing
+	 * 1-bit waveform. We are NOT converting the three voices into
+	 * independent hardware PWM channels.
+	 */
 
 /*
-    #define RCC_BASE        0x40021000UL
-    #define RCC_IOPENR      (*(volatile uint32_t *)(RCC_BASE + 0x34))
-	#define RCC_APBENR2     (*(volatile uint32_t *)(RCC_BASE + 0x40UL))
+	#define RCC_BASE		0x40021000UL
+	#define RCC_IOPENR		(*(volatile uint32_t *)(RCC_BASE + 0x34))
+	#define RCC_APBENR2		(*(volatile uint32_t *)(RCC_BASE + 0x40UL))
 
-    #define RCC_IOPENR_GPIOAEN    (1UL << 0)
+	#define RCC_IOPENR_GPIOAEN	  (1UL << 0)
 	#define RCC_APBENR2_SYSCFGEN  (1UL << 0)
 
-    #define GPIOA->BASE      0x50000000UL
-    #define GPIOA->MODER     (*(volatile uint32_t *)(GPIOA->BASE + 0x00))
-    // ?? #define GPIOA->ODR       (*(volatile uint32_t *)(GPIOA->BASE + 0x14))
-	#define GPIOA->BSRR      (*(volatile uint32_t *)(GPIOA->BASE + 0x18UL))
+	#define GPIOA->BASE		 0x50000000UL
+	#define GPIOA->MODER	 (*(volatile uint32_t *)(GPIOA->BASE + 0x00))
+	// ?? #define GPIOA->ODR	   (*(volatile uint32_t *)(GPIOA->BASE + 0x14))
+	#define GPIOA->BSRR		 (*(volatile uint32_t *)(GPIOA->BASE + 0x18UL))
 
 
-	//#define BUTTON_PIN    (1UL << 12)	// PA12 mapped to physical pin 6
+	//#define BUTTON_PIN	(1UL << 12)	// PA12 mapped to physical pin 6
 
-	#define SYSCFG_BASE     0x40010000UL
-	#define SYSCFG_CFGR3    (*(volatile uint32_t *)(SYSCFG_BASE + 0x3CUL))
+	#define SYSCFG_BASE		0x40010000UL
+	#define SYSCFG_CFGR3	(*(volatile uint32_t *)(SYSCFG_BASE + 0x3CUL))
 
-	#define GPIOA->PUPDR     (*(volatile uint32_t *)(GPIOA->BASE + 0x0CUL))
-	#define GPIOA->IDR       (*(volatile uint32_t *)(GPIOA->BASE + 0x10UL))
+	#define GPIOA->PUPDR	 (*(volatile uint32_t *)(GPIOA->BASE + 0x0CUL))
+	#define GPIOA->IDR		 (*(volatile uint32_t *)(GPIOA->BASE + 0x10UL))
 */
 
-	#define GPIOA_PIN0    (1UL << 0)   	// PA4 - physical pin 4
-	#define GPIOA_PIN8    (1UL << 8)   	// PA5 - physical pin 5
+	#define GPIOA_PIN0	  (1UL << 0)	// PA4 - physical pin 4
+	#define GPIOA_PIN8	  (1UL << 8)	// PA5 - physical pin 5
+
+
+#define PIN_RELEASE_DELAY_MS 3500U
+
+static uint32_t pin_release_deadline;
+static uint8_t pins_released = 0;
+
+
+/*
+* Release the pins we're not using right now to not conflict with i2c
+*
+* STM32C011J6M6 SO8:
+*	Physical pin 7 = PA13 / SWDIO
+*	Physical pin 8 = PA14 / SWCLK / BOOT0 (default binding)
+*
+*/
+static void disable_unused_pins(void)
+{
+	const uint32_t pins =
+	(3UL << (13U * 2U)) |
+	(3UL << (14U * 2U));
+
+	/* Ensure GPIOA's peripheral clock is enabled. */
+	RCC->IOPENR |= RCC_IOPENR_GPIOAEN;
+	(void)RCC->IOPENR;
+
+	/* Disable internal pull-ups and pull-downs on PA13 and PA14. */
+	GPIOA->PUPDR &= ~pins;
+
+	/* MODER = 11: analog mode on PA13 and PA14. */
+	GPIOA->MODER = (GPIOA->MODER & ~pins) | pins;
+}
 
 
 static void clock_init(void)
 {
-    /* HSI source = 48 MHz.
-       Select SYSCLK: 12, 24, or 48 MHz. */
+	/* HSI source = 48 MHz.
+	   Select SYSCLK: 12, 24, or 48 MHz. */
 
-    RCC->CR |= RCC_CR_HSION;
+	RCC->CR |= RCC_CR_HSION;
 
-    while ((RCC->CR & RCC_CR_HSIRDY) == 0)
-        ;
+	while ((RCC->CR & RCC_CR_HSIRDY) == 0)
+		;
 
 #if MUSIC_CLOCK_MULTIPLIER == 1
-    /* 48 MHz / 4 = 12 MHz */
-    #define STM32_HSI_DIV_VALUE 2UL
+	/* 48 MHz / 4 = 12 MHz */
+	#define STM32_HSI_DIV_VALUE 2UL
 #elif MUSIC_CLOCK_MULTIPLIER == 2
-    /* 48 MHz / 2 = 24 MHz */
-    #define STM32_HSI_DIV_VALUE 1UL
+	/* 48 MHz / 2 = 24 MHz */
+	#define STM32_HSI_DIV_VALUE 1UL
 #elif MUSIC_CLOCK_MULTIPLIER == 4
-    /* 48 MHz / 1 = 48 MHz */
-    #define STM32_HSI_DIV_VALUE 0UL
+	/* 48 MHz / 1 = 48 MHz */
+	#define STM32_HSI_DIV_VALUE 0UL
 #else
-    #error "Unsupported MUSIC_CLOCK_MULTIPLIER"
+	#error "Unsupported MUSIC_CLOCK_MULTIPLIER"
 #endif
 
-    RCC->CR =
-        (RCC->CR & ~RCC_CR_HSIDIV) |
-        (STM32_HSI_DIV_VALUE << RCC_CR_HSIDIV_Pos);
+	RCC->CR =
+		(RCC->CR & ~RCC_CR_HSIDIV) |
+		(STM32_HSI_DIV_VALUE << RCC_CR_HSIDIV_Pos);
 
-    /* Select HSI as SYSCLK. */
-    RCC->CFGR =
-        (RCC->CFGR & ~RCC_CFGR_SW) |
-        0UL;
+	/* Select HSI as SYSCLK. */
+	RCC->CFGR =
+		(RCC->CFGR & ~RCC_CFGR_SW) |
+		0UL;
 
-    /* Wait for the system clock switch to complete. */
-    while ((RCC->CFGR & RCC_CFGR_SWS) != 0)
-        ;
+	/* Wait for the system clock switch to complete. */
+	while ((RCC->CFGR & RCC_CFGR_SWS) != 0)
+		;
 }
 
 
@@ -151,73 +182,121 @@ static void clock_init(void)
 // Button is active-low
 //
 // Behavior:
-//   Falling edge -> start press debounce
-//   Press confirmed -> wait for release
-//   Rising edge -> immediately generate button event
-//   After release -> debounce/lockout for 20 ms
-//   After debounce -> ready for next press
+//	 Falling edge -> start press debounce
+//	 Press confirmed -> wait for release
+//	 Rising edge -> immediately generate button event
+//	 After release -> debounce/lockout for 20 ms
+//	 After debounce -> ready for next press
 
-#define BUTTON_PIN       12U
-#define BUTTON_MASK      (1UL << BUTTON_PIN)
-#define DEBOUNCE_MS      20U
+#define BUTTON_PIN		 12U
+#define BUTTON_MASK		 (1UL << BUTTON_PIN)
+#define DEBOUNCE_MS		 20U
 
 enum
 {
-    BUTTON_WAITING = 0,
-    BUTTON_DEBOUNCE_PRESS,
-    BUTTON_PRESSED,
-    BUTTON_DEBOUNCE_RELEASE
+	BUTTON_WAITING = 0,
+	BUTTON_DEBOUNCE_PRESS,
+	BUTTON_PRESSED,
+	BUTTON_DEBOUNCE_RELEASE
 };
 
 static volatile uint8_t button_state = BUTTON_WAITING;
 static volatile uint8_t button_timer = 0;
 static volatile uint8_t button_pressed = 0;
 
+// Long press variables
+#define LONG_PRESS_MS	 1000U
+static volatile uint16_t press_duration_counter = 0;
+static volatile uint8_t go_to_sleep_flag = 0;
+static volatile uint8_t ignore_next_release = 0;
+
 
 // Called immediately when the button is released.
 // No debounce delay is added before this function is called.
 static void button_pressed_event(void)
 {
-	// Handle button event here.
-	button_pressed = 1;
+	// Ignore the release event immediately following a wake-up
+	if (ignore_next_release) {
+		ignore_next_release = 0;
+	} else {
+		// Handle button event here.
+		button_pressed = 1;
+	}
+}
+
+// Safely enter low power mode from the main thread
+static void enter_sleep_mode(void)
+{
+	// Silence audio output pins before sleeping
+	GPIOA->BSRR = (GPIOA_PIN8 << 16) | (GPIOA_PIN0 << 16);
+
+	// Reset button state machine so it expects a fresh press to wake up
+	button_state = BUTTON_WAITING;
+	button_timer = 0;
+
+	// Configure EXTI to only trigger on falling edge (the wake-up press)
+	EXTI->RTSR1 &= ~BUTTON_MASK;
+	EXTI->FTSR1 |=	BUTTON_MASK;
+	
+	// Clear any stale pending EXTI flags
+	EXTI->RPR1 = BUTTON_MASK;
+	EXTI->FPR1 = BUTTON_MASK;
+
+	// Ensure the wake-up press doesn't skip the song upon release
+	ignore_next_release = 1;
+
+	// Disable SysTick so it doesn't interrupt WFI every 1ms
+	SysTick->CTRL &= ~SysTick_CTRL_TICKINT_Msk;
+
+	// Wait For Interrupt (Deep sleep/Stop mode)
+	__DSB();
+	__WFI(); 
+	__ISB();
+
+	// --- WAKE UP OCCURS HERE ---
+
+	// Re-enable SysTick interrupt
+	SysTick->CTRL |= SysTick_CTRL_TICKINT_Msk;
+	
+	press_duration_counter = 0;
 }
 
 
 // Initialize PA12 and EXTI12.
 static void switch_init(void)
 {
-    // Enable GPIOA clock
-    RCC->IOPENR |= RCC_IOPENR_GPIOAEN;
+	// Enable GPIOA clock
+	RCC->IOPENR |= RCC_IOPENR_GPIOAEN;
 
-    // Enable SYSCFG clock
-    RCC->APBENR2 |= RCC_APBENR2_SYSCFGEN;
+	// Enable SYSCFG clock
+	RCC->APBENR2 |= RCC_APBENR2_SYSCFGEN;
 
-    // PA12 = input
-    GPIOA->MODER &= ~(3UL << (BUTTON_PIN * 2));
+	// PA12 = input
+	GPIOA->MODER &= ~(3UL << (BUTTON_PIN * 2));
 
-    // PA12 = pull-up
-    GPIOA->PUPDR &= ~(3UL << (BUTTON_PIN * 2));
-    GPIOA->PUPDR |=  (1UL << (BUTTON_PIN * 2));
+	// PA12 = pull-up
+	GPIOA->PUPDR &= ~(3UL << (BUTTON_PIN * 2));
+	GPIOA->PUPDR |=  (1UL << (BUTTON_PIN * 2));
 
-    // EXTI12 source = PA12
-    // EXTI12 is in EXTICR4.
-    // Port A has selection value 0, so clear the field.
-    EXTI->EXTICR[3] &= ~(0xFUL << 0);
+	// EXTI12 source = PA12
+	// EXTI12 is in EXTICR4.
+	// Port A has selection value 0, so clear the field.
+	EXTI->EXTICR[3] &= ~(0xFUL << 0);
 
-    // Initially detect only falling edges.
-    // Falling edge = button pressed.
-    EXTI->RTSR1 &= ~BUTTON_MASK;
-    EXTI->FTSR1 |=  BUTTON_MASK;
+	// Initially detect only falling edges.
+	// Falling edge = button pressed.
+	EXTI->RTSR1 &= ~BUTTON_MASK;
+	EXTI->FTSR1 |=	BUTTON_MASK;
 
-    // Clear any stale pending flags.
-    EXTI->RPR1 = BUTTON_MASK;
-    EXTI->FPR1 = BUTTON_MASK;
+	// Clear any stale pending flags.
+	EXTI->RPR1 = BUTTON_MASK;
+	EXTI->FPR1 = BUTTON_MASK;
 
-    // Enable EXTI12 interrupt.
-    EXTI->IMR1 |= BUTTON_MASK;
+	// Enable EXTI12 interrupt.
+	EXTI->IMR1 |= BUTTON_MASK;
 
-    // EXTI4..15 share this interrupt vector.
-    NVIC_EnableIRQ(EXTI4_15_IRQn);
+	// EXTI4..15 share this interrupt vector.
+	NVIC_EnableIRQ(EXTI4_15_IRQn);
 }
 
 
@@ -226,134 +305,146 @@ static volatile uint32_t systick_ms = 0;
 
 static void systick_init(void)
 {
-    SysTick->LOAD = (CPU_CLOCK_HZ / 1000UL) - 1UL;
-    SysTick->VAL  = 0UL;
+	SysTick->LOAD = (CPU_CLOCK_HZ / 1000UL) - 1UL;
+	SysTick->VAL  = 0UL;
 
-    SysTick->CTRL =
-        SysTick_CTRL_CLKSOURCE_Msk |
-        SysTick_CTRL_TICKINT_Msk   |
-        SysTick_CTRL_ENABLE_Msk;
+	SysTick->CTRL =
+		SysTick_CTRL_CLKSOURCE_Msk |
+		SysTick_CTRL_TICKINT_Msk   |
+		SysTick_CTRL_ENABLE_Msk;
 }
 
 // EXTI4..15 interrupt handler.
 void EXTI4_15_IRQHandler(void)
 {
-    uint32_t rising_pending;
-    uint32_t falling_pending;
+	uint32_t rising_pending;
+	uint32_t falling_pending;
 
-    rising_pending  = EXTI->RPR1;
-    falling_pending = EXTI->FPR1;
+	rising_pending	= EXTI->RPR1;
+	falling_pending = EXTI->FPR1;
 
-    // Clear pending flags.
-    EXTI->RPR1 = rising_pending;
-    EXTI->FPR1 = falling_pending;
+	// Clear pending flags.
+	EXTI->RPR1 = rising_pending;
+	EXTI->FPR1 = falling_pending;
 
-    // Falling edge = button pressed.
-    if (falling_pending & BUTTON_MASK)
-    {
-        if (button_state == BUTTON_WAITING)
-        {
-            // Start press debounce.
-            button_state = BUTTON_DEBOUNCE_PRESS;
-            button_timer = DEBOUNCE_MS;
+	// Falling edge = button pressed.
+	if (falling_pending & BUTTON_MASK)
+	{
+		if (button_state == BUTTON_WAITING)
+		{
+			// Start press debounce.
+			button_state = BUTTON_DEBOUNCE_PRESS;
+			button_timer = DEBOUNCE_MS;
 
-            // Ignore further falling edges while debouncing.
-            EXTI->FTSR1 &= ~BUTTON_MASK;
-        }
-    }
+			// Ignore further falling edges while debouncing.
+			EXTI->FTSR1 &= ~BUTTON_MASK;
+		}
+	}
 
-    // Rising edge = button released.
-    if (rising_pending & BUTTON_MASK)
-    {
-        if (button_state == BUTTON_PRESSED)
-        {
-            // The button has just been released.
-            //
-            // Generate the event immediately.
-            button_pressed_event();
+	// Rising edge = button released.
+	if (rising_pending & BUTTON_MASK)
+	{
+		if (button_state == BUTTON_PRESSED)
+		{
+			// The button has just been released.
+			//
+			// Generate the event immediately.
+			button_pressed_event();
 
-            // Now enter release debounce/lockout.
-            button_state = BUTTON_DEBOUNCE_RELEASE;
-            button_timer = DEBOUNCE_MS;
+			// Now enter release debounce/lockout.
+			button_state = BUTTON_DEBOUNCE_RELEASE;
+			button_timer = DEBOUNCE_MS;
 
-            // Ignore further rising edges during debounce.
-            EXTI->RTSR1 &= ~BUTTON_MASK;
-        }
-    }
+			// Ignore further rising edges during debounce.
+			EXTI->RTSR1 &= ~BUTTON_MASK;
+		}
+	}
 }
 
 void SysTick_Handler(void)
 {
-    systick_ms++;
+	systick_ms++;
 
-    if (button_timer == 0U)
-        return;
+	// Track how long the button has been held
+	if (button_state == BUTTON_PRESSED) {
+		press_duration_counter++;
+		if (press_duration_counter >= LONG_PRESS_MS) {
+			go_to_sleep_flag = 1;
+			press_duration_counter = 0;
+		}
+	}
 
-    button_timer--;
+	if (button_timer == 0U)
+		return;
 
-    if (button_timer != 0U)
-        return;
+	button_timer--;
 
-    switch (button_state)
-    {
-        case BUTTON_DEBOUNCE_PRESS:
-            if ((GPIOA->IDR & BUTTON_MASK) == 0U)
-            {
-                button_state = BUTTON_PRESSED;
+	if (button_timer != 0U)
+		return;
 
-                // Clear any stale rising-edge pending flag
-                EXTI->RPR1 = BUTTON_MASK;
+	switch (button_state)
+	{
+		case BUTTON_DEBOUNCE_PRESS:
+			if ((GPIOA->IDR & BUTTON_MASK) == 0U)
+			{
+				button_state = BUTTON_PRESSED;
+				press_duration_counter = 0; // Start the long press timer
 
-                // Now allow rising edges (button release)
-                EXTI->RTSR1 |= BUTTON_MASK;
-            }
-            else
-            {
-                // Button bounced back to released
-                button_state = BUTTON_WAITING;
+				// Clear any stale rising-edge pending flag
+				EXTI->RPR1 = BUTTON_MASK;
 
-                // Clear any stale falling-edge pending flag
-                EXTI->FPR1 = BUTTON_MASK;
+				// Now allow rising edges (button release)
+				EXTI->RTSR1 |= BUTTON_MASK;
+			}
+			else
+			{
+				// Button bounced back to released
+				button_state = BUTTON_WAITING;
 
-                // Continue waiting for a press
-                EXTI->FTSR1 |= BUTTON_MASK;
-            }
-            break;
+				// Clear any stale falling-edge pending flag
+				EXTI->FPR1 = BUTTON_MASK;
 
-        case BUTTON_DEBOUNCE_RELEASE:
-            if ((GPIOA->IDR & BUTTON_MASK) != 0U)
-            {
-                button_state = BUTTON_WAITING;
+				// Continue waiting for a press
+				EXTI->FTSR1 |= BUTTON_MASK;
+			}
+			break;
 
-                // Clear any stale falling-edge pending flag
-                EXTI->FPR1 = BUTTON_MASK;
+		case BUTTON_DEBOUNCE_RELEASE:
+			if ((GPIOA->IDR & BUTTON_MASK) != 0U)
+			{
+				button_state = BUTTON_WAITING;
+				press_duration_counter = 0;
 
-                // Now allow falling edges (button press)
-                EXTI->FTSR1 |= BUTTON_MASK;
-            }
-            else
-            {
-                // Button bounced back to pressed
-                button_state = BUTTON_PRESSED;
+				// Clear any stale falling-edge pending flag
+				EXTI->FPR1 = BUTTON_MASK;
 
-                // Clear any stale rising-edge pending flag
-                EXTI->RPR1 = BUTTON_MASK;
+				// Now allow falling edges (button press)
+				EXTI->FTSR1 |= BUTTON_MASK;
+			}
+			else
+			{
+				// Button bounced back to pressed
+				button_state = BUTTON_PRESSED;
 
-                // Continue waiting for release
-                EXTI->RTSR1 |= BUTTON_MASK;
-            }
-            break;
+				// Clear any stale rising-edge pending flag
+				EXTI->RPR1 = BUTTON_MASK;
 
-        default:
-            button_state = BUTTON_WAITING;
-            button_timer = 0U;
+				// Continue waiting for release
+				EXTI->RTSR1 |= BUTTON_MASK;
+			}
+			break;
 
-            // Clear any stale falling-edge pending flag
-            EXTI->FPR1 = BUTTON_MASK;
+		default:
+			button_state = BUTTON_WAITING;
+			button_timer = 0U;
+			press_duration_counter = 0;
 
-            EXTI->FTSR1 |= BUTTON_MASK;
-            break;
-    }
+			// Clear any stale falling-edge pending flag
+			EXTI->FPR1 = BUTTON_MASK;
+
+			EXTI->FTSR1 |= BUTTON_MASK;
+			break;
+	}
 }
 
 
@@ -380,9 +471,9 @@ void SysTick_Handler(void)
 	}
 
 
-    static inline void audio_init(void)
-    {
-        // Enable GPIOA
+	static inline void audio_init(void)
+	{
+		// Enable GPIOA
 		RCC->IOPENR |= RCC_IOPENR_GPIOAEN;
 
 		// Enable SYSCFG clock
@@ -414,11 +505,11 @@ void SysTick_Handler(void)
 		/* Start with both low */
 		GPIOA->BSRR = (GPIOA_PIN8 << 16) |
 					 (GPIOA_PIN0 << 16);
-    }
+	}
 
 
-    static inline void audio_write(uint8_t value)
-    {
+	static inline void audio_write(uint8_t value)
+	{
 #ifdef USE_COMPLEMENTARY_OUTPUT
 		if (value)
 		{
@@ -439,62 +530,67 @@ void SysTick_Handler(void)
 		else
 			GPIOA->BSRR = GPIOA_PIN8 << 16;
 #endif
-    }
+	}
 
 	static void stm32_delay_ms(uint32_t ms)
 	{
-	    uint32_t start = systick_ms;
+		uint32_t start = systick_ms;
 
-	    while ((uint32_t)(systick_ms - start) < ms)
-	    {
-		/* wait */
-	    }
+		while ((uint32_t)(systick_ms - start) < ms)
+		{
+			if (go_to_sleep_flag) {
+				enter_sleep_mode();
+				go_to_sleep_flag = 0;
+				// Reset the timer start to account for the pause
+				start = systick_ms;
+			}
+		}
 	}
 
 	#define _delay_ms(ms) stm32_delay_ms((uint32_t)(ms))
 
 
-    /*
-     * STM32 has no AVR PROGMEM.
-     *
-     * Data lives in normal flash, which the Cortex-M can read directly.
-     */
-    #define READ8(p)        (*(const uint8_t *)(p))
-    #define READ16(p)       (*(const uint16_t *)(p))
+	/*
+	 * STM32 has no AVR PROGMEM.
+	 *
+	 * Data lives in normal flash, which the Cortex-M can read directly.
+	 */
+	#define READ8(p)		(*(const uint8_t *)(p))
+	#define READ16(p)		(*(const uint16_t *)(p))
 	#define AVR_PROGMEM
 
 #else
 
-    /*
-     * Original AVR implementation.
-     */
+	/*
+	 * Original AVR implementation.
+	 */
 
-    #include <avr/io.h>         // core avr functionality
-    #include <avr/pgmspace.h>   // * * *
+	#include <avr/io.h>			// core avr functionality
+	#include <avr/pgmspace.h>	// * * *
 
 	#include <util/delay.h>
 
 
-    // stuff you can mess with
-    //#define OUTPUT 0
-    #define OUTPUT         3    // the PORTB hardware output pin
+	// stuff you can mess with
+	//#define OUTPUT 0
+	#define OUTPUT		   3	// the PORTB hardware output pin
 
 	// initialize output pin
-    #define audio_init() \
-        do { DDRB = (uint8_t)(1U << OUTPUT); } while (0)
+	#define audio_init() \
+		do { DDRB = (uint8_t)(1U << OUTPUT); } while (0)
 
-    #define audio_write(value) \
-        do { PORTB = (value); } while (0)
+	#define audio_write(value) \
+		do { PORTB = (value); } while (0)
 
-    #define READ8(p)        pgm_read_byte((p))
-    #define READ16(p)       pgm_read_word((p))
+	#define READ8(p)		pgm_read_byte((p))
+	#define READ16(p)		pgm_read_word((p))
 
 	#define AVR_PROGMEM PROGMEM
 
 #endif
 
 
-#include "4ml-data.h"       // holds the _4ml_data[] arrays
+#include "4ml-data.h"		// holds the _4ml_data[] arrays
 
 #ifdef DEBUG
 #include <stdio.h>
@@ -502,25 +598,25 @@ void SysTick_Handler(void)
 
 // stuff you shouldn't really mess with
 #define SAMPLE_SPEED   (5 * MUSIC_CLOCK_MULTIPLIER)   // the sampler playback rate
-#define SAMPLE_LENGTH  127  // the length of the sample array
-#define MAXLOOPS       5    // the maximum number of nested loops
+#define SAMPLE_LENGTH  127	// the length of the sample array
+#define MAXLOOPS	   5	// the maximum number of nested loops
 
-#define CMD_REST    0
+#define CMD_REST	0
 #define CMD_OCTAVE 13
 #define CMD_VOLUME 14
-#define CMD_FN     15
+#define CMD_FN	   15
 #define CMD_FN_LOOP_START 0
 #define CMD_FN_LOOP_END   1
-#define CMD_FN_MACRO      2
-#define CMD_FN_TEMPO      3
+#define CMD_FN_MACRO	  2
+#define CMD_FN_TEMPO	  3
 #define CMD_FN_TRANSPOSE  4
 #define CMD_FN_INSTRUMENT 5
-#define CMD_FN_TIE        6
-#define CMD_FN_PAN        7
+#define CMD_FN_TIE		  6
+#define CMD_FN_PAN		  7
 #define CMD_FN_PERCUSSION 8
 #define CMD_FN_PERCUSSION_OFF 9
-#define CMD_FN_MISC       14
-#define CMD_FN_END        15
+#define CMD_FN_MISC		  14
+#define CMD_FN_END		  15
 
 // throw a compile-time error if the 4ML data isn't AVR compatible
 
@@ -590,22 +686,22 @@ const uint8_t sample[SAMPLE_LENGTH] AVR_PROGMEM =
 uint8_t  song_voices;
 
 // channel variables (grouped in arrays)
-uint8_t  out              [MAX_VOICES],
-	octave           [MAX_VOICES],
-	length           [MAX_VOICES],
-	volume           [MAX_VOICES],
-	loops_active     [MAX_VOICES],
-	is_percussion    [MAX_VOICES],
-	instrument       [MAX_VOICES];
+uint8_t  out			  [MAX_VOICES],
+	octave			 [MAX_VOICES],
+	length			 [MAX_VOICES],
+	volume			 [MAX_VOICES],
+	loops_active	 [MAX_VOICES],
+	is_percussion	 [MAX_VOICES],
+	instrument		 [MAX_VOICES];
 
 int8_t	octave_transpose_adjust [MAX_VOICES];
 
-uint16_t data_pointer     [MAX_VOICES],
-		 waveform         [MAX_VOICES],
-		 pitch_counter    [MAX_VOICES],
-		 frequency        [MAX_VOICES],
-		 loop_duration    [MAXLOOPS][MAX_VOICES],
-		 loop_point       [MAXLOOPS][MAX_VOICES],
+uint16_t data_pointer	  [MAX_VOICES],
+		 waveform		  [MAX_VOICES],
+		 pitch_counter	  [MAX_VOICES],
+		 frequency		  [MAX_VOICES],
+		 loop_duration	  [MAXLOOPS][MAX_VOICES],
+		 loop_point		  [MAXLOOPS][MAX_VOICES],
 		 pointer_location [MAX_VOICES];
 
 int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
@@ -617,25 +713,25 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 
 //#endif
 	//uint8_t song_voices = xxxsong_voices;
-    //CLKPR = _BV(CLKPCE);
-    //CLKPR = _BV(CLKPS0);
-    //interrupts();
+	//CLKPR = _BV(CLKPCE);
+	//CLKPR = _BV(CLKPS0);
+	//interrupts();
 
 	// sampler variables
-	uint8_t  currentByte     = 0,
-	         currentBit      = 0,
-	         sample_counter  = 0,
-	         current_sample  = 0;
+	uint8_t  currentByte	 = 0,
+			 currentBit		 = 0,
+			 sample_counter  = 0,
+			 current_sample  = 0;
 
 	// temporary data storage variables
-	uint8_t  buffer1         = 0,
-	         buffer2         = 0,
-	         buffer3         = 0;
-	uint16_t buffer4         = 0;
+	uint8_t  buffer1		 = 0,
+			 buffer2		 = 0,
+			 buffer3		 = 0;
+	uint16_t buffer4		 = 0;
 
 	// main timer variables
-	uint16_t tick_counter    = 0,
-	         tick_speed      = 1000 * MUSIC_CLOCK_MULTIPLIER; // default tempo
+	uint16_t tick_counter	 = 0,
+			 tick_speed		 = 1000 * MUSIC_CLOCK_MULTIPLIER; // default tempo
 
 	int8_t transpose = 0;
 	int8_t transpose_note_offset = 0;
@@ -652,28 +748,45 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 		data_pointer[i] = data_pointer[i] << 8;
 		data_pointer[i] = data_pointer[i] | READ8(&_4ml_data[(i*2)+1+song_idx]);
 
-		frequency[i]       = 255; // random frequency (won't ever be sounded)
-		volume[i]          = 1;
-		octave[i]          = 1 << 3;   // default octave : o3
+		frequency[i]	   = 255; // random frequency (won't ever be sounded)
+		volume[i]		   = 1;
+		octave[i]		   = 1 << 3;   // default octave : o3
 		octave_transpose_adjust[i] = 0;
 		is_percussion[i]   = 0;   // default: not percussion
-		out[i]             = 0;
-		length[i]          = 0;
+		out[i]			   = 0;
+		length[i]		   = 0;
 		loops_active[i]    = 0;
 
-		waveform[i]      = 0;
+		waveform[i]		 = 0;
 		pitch_counter[i] = 0;
 		pointer_location[i] = 0;
 
 		//TODO: initialize
 		//loop_duration    [MAXLOOPS][MAX_VOICES],
-		//loop_point       [MAXLOOPS][MAX_VOICES],
+		//loop_point	   [MAXLOOPS][MAX_VOICES],
 	}
 
 	while(!button_pressed)
 	{
+		// if we've reached our time, disable physical pins 7 and 8 to not conflict with I2C from the main badge
+		// compare every time to keep the tempo the same (i.e., at the 3.5 second mark don't short circuit because that raises the pitch.)
+		uint32_t now = systick_ms;
+		int32_t deadline_reached = (int32_t)(now - pin_release_deadline) >= 0;
+
+		//if (!pins_released && (int32_t)(systick_ms - pin_release_deadline) >= 0) {
+		if (deadline_reached && !pins_released) {
+			disable_unused_pins();
+			pins_released = 1;
+		}
+
+		// Safe check for deep sleep triggered from SysTick
+		if (go_to_sleep_flag) {
+			enter_sleep_mode();
+			go_to_sleep_flag = 0;
+		}
+
 		/**********************
-		 *  Synthesizer Code  *
+		 *	Synthesizer Code  *
 		 **********************/
 
 		/* Port changes (the demarcated 'output' commands) are carefully interleaved with
@@ -733,7 +846,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 
 
 		/**************************
-		 *  Data Processing Code  *
+		 *	Data Processing Code  *
 		 **************************/
 
 		if(tick_counter-- == 0)
@@ -816,7 +929,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 						else if(buffer2 == CMD_FN_TRANSPOSE) {
 							transpose = (int8_t) buffer3;  // buffer3 is the transpose step as a signed int8
 							transpose_octave_offset = transpose / 12;  // 12 half steps in an octave
-							transpose_note_offset   = transpose % 12;
+							transpose_note_offset	= transpose % 12;
 							data_pointer[voice] += 2; // skip data
 						}
 
@@ -933,7 +1046,7 @@ int play_song(uint8_t xxxsong_voices, uint16_t song_idx)
 								buffer1 = 2;
 							}
 							// reset the sampler
-							currentBit     = 0;
+							currentBit	   = 0;
 							currentByte    = READ8(&sample_index[buffer1 - 1]);
 							current_sample = READ8(&sample_index[buffer1]);
 						}
@@ -1042,11 +1155,15 @@ int main(void)
 	// initilize systick
 	systick_init();
 
+	// for disabling pins 7 and 8 after 3.5 seconds
+	pin_release_deadline = systick_ms + PIN_RELEASE_DELAY_MS;
+	pins_released = 0;
+
 	// initialize output pin
 	audio_init();
 
 	//while(!switch_pressed()) {
-        //_delay_ms(50);
+		//_delay_ms(50);
 	//}
 
 	//printf("Total tracks: %d\n", TOTAL_TRACKS);
@@ -1063,4 +1180,3 @@ int main(void)
 
 	return 0;
 }
-
