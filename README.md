@@ -1,7 +1,38 @@
 
 # 4ML Chip Player
 
-This repository hosts the hardware specifications and software needed to create a 1-bit music [minibadge](https://github.com/lukejenkins/minibadge).
+This repository hosts the hardware specifications and software needed to create a 1-bit music [minibadge](https://github.com/lukejenkins/minibadge),
+given out at SAINTCON 2026.
+
+
+## Playlist
+
+* Duck Tales - Moon Theme 
+* Metroid - Kraid's Hideout
+* Super Mario Bros - Overworld
+* Super Mario Bros - Underground
+* Super Mario Bros - Swimming
+* Ninja Gaiden - Unbreakable Determination
+* Wizards and Warriors - Intro
+* Rad Racer - Tune 2
+* Gauntlet - Intro
+* Mega Man 3 - Proto Man (Whistler)
+* Goonies 2 - Good Enough
+* Kid Icarus - Stage 1 Underworld
+* Mike Tyson's Punchut - Match
+* Secret of Mana - Color of the Summer Sky
+* Sorcerian - Where We Meet
+* Wii Channels - Mii Channel
+* The Legend of Zelda - Overworld
+* Zelda II - The Adventure of Link - Temple
+* The Legend of Zelda - A Link to the Past - Dark World Overworld
+* Contra - Stage 1
+* Super Mario Bros 2 - Credits
+* Trojan - Credits
+* Ninja Gaiden - A Hero's End
+* Harry Potter - Hedwig's Theme
+* BYU fight song
+* Rick Astley - Never Give You Up
 
 
 ## Hardware
@@ -11,13 +42,13 @@ This minibadge uses the STM32C011J6M6 chip with the buzzer connected to pins 4 a
 The pinout is designed for flexibility in the event you want to tinker with the badge itself.  Currently the software uses bitbanging PA0 and PA8 outputs to drive the buzzer.  This could instead be updated to use the TIM1\_CH3 and its opposite TIM1\_CH3N outputs to have the buzzer be driven via the timer hardware itself.
 
 ```
-STM32 Pinout 
+STM32C011J6M6 Pinout 
 
 1 - SDA (for I2C)
 2 - 3v3
 3 - Ground
-4 - Buzzer (PA0 or TIM1\_CH3)
-5 - Buzzer (PA8 or TIM1\_CH3N)
+4 - Buzzer (PA0 or TIM1_CH3)
+5 - Buzzer (PA8 or TIM1_CH3N)
 6 - Button
 7 - Main badge clock / SWDIO (for flashing)
 8 - SCL (for I2C) / SWCLK (for flashing)
@@ -48,22 +79,31 @@ Minibdge Pinout
 ```
 
 
-### Soldering the minibadge
+### Assembling the minibadge
 
-The minibadge comes with:
+#### Components
+
+The SAINTCON 2026 minibadge kit comes with:
 * STM32C011J6M6 chip
 * Buzzer
 * Switch
 * two capacitors
+   - A 0.1 uF capacitor, marked with black.  This is to be soldered as C1, closest to the chip.
+   - A 4.7 uF capacitor, unmarked.  This is to be soldered at C2.
 
+#### Back component orientation
 
-1. Solder the chip first, ensuring the correct orientation.  Pin 1 on the chip is the bottom left pin when the chip markings are readable.  I.e., 32C01166 and the ST logo should be right side up.
-2. Solder the capacitors next.  The 2026 SAINTCON minibadge kit comes with the two capacitors needed:
-   * A 0.1uF capacitor, marked with black.  This is to be soldered as C1, closest to the chip.
-   * A 4.8 uF capacitor, unmarked.  This is to be soldered at C2.
+![Back component orientation](docs/badge-marked.png)
+
+#### Soldering Steps
+
+1. Solder the chip first, ensuring the correct orientation.  Pin 1 on the chip is the bottom left pin when the chip markings are readable.  I.e., 32C01166 and the ST logo should be right side up.  Pin 1 must be matched to the dot on the pcb indicating pin 1.  The chip is oriented such that it matches the printed text on the PCB.
+
+2. Solder the capacitors next.
+
 3. Solder the switch.
-4. Solder the buzzer, followed by the header pins.  Note that if you need more room to solder header pins, the buzzer could be soldered on last.
 
+4. Solder the buzzer, followed by the header pins.  Note that if you need more room to solder header pins, the buzzer could be soldered on last.
 
 
 ## Software
